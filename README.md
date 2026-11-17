@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.5.1 (Atlas)** · 2026-11-17.
+**Self-hosted, auditable fact-checking workspace.** Version **0.5.2 (Verity)** · 2026-11-17.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -23,14 +23,14 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
 
-## What is new in 0.5.1
+## What is new in 0.5.2
 
-- Fixed a runtime JavaScript syntax error that made dashboard buttons unresponsive after deployment.
-- Four switchable UI templates: **Aurora**, **Paper**, **Slate**, **Terminal**.
-- Top navigation, version chip and a **Version & Updates** dialog.
-- Single source of truth for versioning in `app/version.py`.
-- Complete English / Chinese / Japanese documentation and a one-command GitHub sync script.
-- NAS runtime rebuilt and verified against the latest source.
+- **Strict trusted-source whitelist.** Only the Top 30 credible media, professional fact-checkers, globally recognised search engines and authoritative primary sources can enter the evidence pool.
+- Baidu Baike/Wenku, QQ, Sohu, Huxiu, Wikipedia and similar aggregator or encyclopedia sites are rejected at retrieval time.
+- Evidence items are labelled by source type; a new **Trusted Source Policy** panel and `/api/source-policy` endpoint expose the full whitelist.
+- `scripts/clean_untrusted_sources.py` removes historical non-whitelisted sources (dry-run by default).
+
+Previous release 0.5.1 added four switchable UI templates (Aurora / Paper / Slate / Terminal), top navigation, version chip, a Version & Updates dialog, unified versioning in `app/version.py`, tri-language documentation and GitHub sync.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 

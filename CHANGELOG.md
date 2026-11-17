@@ -1,8 +1,20 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.5.1 (Atlas, 2026-11-17)**.
+All notable changes to NewsVerify are documented here. The current version is **0.5.2 (Verity, 2026-11-17)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.5.2 — Verity (2026-11-17)
+
+### Added
+- `app/verification/source_policy.py`: strict whitelist covering the Top 30 media, professional fact-checkers, globally recognised search engines and authoritative primary sources.
+- `/api/source-policy` and `/api/v1/source-policy` expose the complete allow-list and deny-list; a new dashboard panel makes the policy auditable.
+- `scripts/clean_untrusted_sources.py` removes historical non-whitelisted sources and linked evidence (dry-run by default).
+
+### Changed
+- Evidence collection now rejects Baidu Baike/Wenku, QQ, Sohu, Huxiu, Wikipedia and other aggregator or encyclopedia domains before fetching and persistence.
+- Top 30 cross-check links pass through the same whitelist filter.
+- Event details label each evidence item with its source type; the methodology panel documents the policy.
 
 ## 0.5.1 — Atlas (2026-11-17)
 

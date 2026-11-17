@@ -25,7 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: newsverify:0.5.1
+    image: newsverify:0.5.2
     restart: unless-stopped
     env_file: .env
     environment:
@@ -49,7 +49,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: newsverify:0.5.1
+    image: newsverify:0.5.2
     restart: unless-stopped
     env_file: .env
     environment:

@@ -6,9 +6,9 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 RELEASE_DATE = "2026-11-17"
-CODENAME = "Atlas"
+CODENAME = "Verity"
 
 THEMES = [
     {"key": "aurora", "name": "极光 · Aurora", "description": "深蓝玻璃质感，默认风格"},
@@ -18,6 +18,19 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.5.2",
+        "date": "2026-11-17",
+        "codename": "Verity",
+        "summary": "严格可信来源白名单：移除百度等聚合站，证据池只收录公信力靠前的来源",
+        "changes": [
+            "新增 source_policy.py：白名单只含 Top30 媒体、专业事实核查机构、全球搜索引擎入口与权威一手资料机构",
+            "证据检索层拦截百度百科/文库、QQ、搜狐、虎嗅、维基百科等非白名单域名，不再进入证据池",
+            "Top30 媒体交叉核查的来源链接同样经过白名单过滤",
+            "事件详情标注每条证据的来源类型，新增「可信来源白名单」面板与 /api/source-policy 接口",
+            "新增历史数据清理脚本 scripts/clean_untrusted_sources.py（默认 dry-run）",
+        ],
+    },
     {
         "version": "0.5.1",
         "date": "2026-11-17",

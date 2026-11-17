@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.5.1（Atlas） · 文档更新：2026-11-17
+> 软件版本：0.5.2（Verity） · 文档更新：2026-11-17
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.5.1）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.5.2）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -122,6 +122,7 @@ NewsVerify/
 │   ├── db/                   # 数据模型与异步会话
 │   ├── ingest/               # 抓取与正文提取（平台适配、trafilatura）
 │   ├── verification/         # 核查核心：主张/搜索/证据/判定/LLM/Top媒体
+│   │   └── source_policy.py  # 可信来源白名单（允许类别 + 显式拒绝表）
 │   ├── ratings/              # 六大评级体系元数据
 │   └── tracking/             # 追踪差分（内容指纹比对）
 ├── docs/
@@ -137,6 +138,7 @@ NewsVerify/
 │   ├── deploy_update.sh      # 部署/更新（含清理与重建）
 │   ├── sync_github.sh        # 一键提交并推送脱敏源码到 GitHub
 │   ├── clean_failed_jobs.py  # 清理历史失败任务（默认 dry-run）
+│   ├── clean_untrusted_sources.py  # 清理非白名单历史来源（默认 dry-run）
 │   ├── backup.sh             # 数据库备份（pg_dump 压缩）
 │   ├── preflight.sh          # 部署前检查
 │   └── smoke-test.sh         # 冒烟测试
@@ -375,3 +377,14 @@ $DOCKER compose logs -f bot worker
 ### 13.4 v0.5.1 运行时修复
 
 首次部署后发现 `showTrackSettings()` 里的 `onclick` 因为 Python 三引号字符串吞掉反斜杠，导致整段 JS 在浏览器里解析失败、所有按钮失效。0.5.1 改用 HTML 实体 `&quot;` 避免引号嵌套，并增加“先按 Python 字符串求值、再用 `node --check` 校验”的检查方式，确保源码检查与运行时一致。
+
+### 13.5 v0.5.2 可信来源白名单
+
+线上事件详情里曾出现 `baike.baidu.com`、`wenku.baidu.com`、`news.qq.com`、`sohu.com`、`huxiu.com` 等来源。它们不是被写进 Top30 榜单，而是搜索引擎返回后未经筛选直接进入证据池。
+
+0.5.2 新增 `app/verification/source_policy.py`，以严格白名单 + 显式拒绝表控制证据入口：
+
+- **允许**：Top30 媒体及其权威变体域名、`FACTCHECK_DOMAINS`（Snopes / FactCheck.org / PolitiFact / Full Fact / AFP Fact Check / Lead Stories 等）、`SEARCH_ENGINE_DOMAINS`（Google / Bing / DuckDuckGo / Yahoo / Brave / Startpage）、`AUTHORITY_DOMAINS`（NASA / NOAA / WHO / UN / OECD 等）。
+- **拒绝**：`BLOCKED_DOMAINS` 覆盖百度、QQ、搜狐、虎嗅、新浪、知乎、微博、维基百科、大英百科等聚合站/百科站/内容农场；子域名（如 `baike.baidu.com`）同样拒绝。
+- **落点**：`collect_evidence()` 在抓取前过滤，`check_top_media()` 对展示来源再过滤；事件详情按 `classify_source()` 标注 `source_type`。
+- **可审计**：`/api/source-policy` 与页面「可信来源白名单」面板公开完整名单；`scripts/clean_untrusted_sources.py` 可清理历史遗留数据（默认 dry-run，需 `--apply`）。

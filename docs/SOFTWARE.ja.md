@@ -1,6 +1,6 @@
 # NewsVerify ソフトウェア仕様書
 
-**バージョン：** 0.5.1（Atlas） · **リリース日：** 2026-11-17  
+**バージョン：** 0.5.2（Verity） · **リリース日：** 2026-11-17  
 **リポジトリ：** https://github.com/zixiang2008/NewsVerify  
 **公開コンソール：** https://new.caishen.today（LAN：`http://192.168.8.253:8095`）
 
@@ -57,6 +57,19 @@ NewsVerify は、複数の公開研究・評価の伝統を工学的に統合し
 | ④ LLM 判定 | 証拠スニペットだけを構造化プロンプトへ | ラベル、確信度、理由、反証、ギャップ |
 | ⑤ 媒体相互確認 | 幅広い検索結果をドメインで Top30 に照合し、重要媒体のみ `site:` 補足 | 30 件の点灯／灰色＋出典 |
 | ⑥ 継続追跡 | 6h / 24h / 週で証拠と判定のフィンガープリントを比較 | 実質変化時のみ通知 |
+
+#### 信頼情報源ホワイトリスト（v0.5.2 以降）
+
+証拠プールは厳格なホワイトリスト（`app/verification/source_policy.py`）を使用し、次の 4 類のみを許可します。
+
+| 区分 | 範囲 | 理由 |
+| --- | --- | --- |
+| Top30 公信力媒体 | Reuters、AP、AFP、BBC ほか 30 媒体と公式バリエントドメイン | 相互確認の基準 |
+| 専門ファクトチェック機関 | Snopes、FactCheck.org、PolitiFact、Full Fact、AFP Fact Check、Lead Stories など | 公開主張の専門審査 |
+| 世界的検索エンジン | Google、Bing、DuckDuckGo、Yahoo、Brave、Startpage | 追跡可能な検索入口のみ。編集証拠としては扱わない |
+| 権威ある一次資料機関 | NASA、NOAA、WHO、UN、OECD、Science、PNAS など | 直接照合できる原資料 |
+
+Baidu 百科/文庫、QQ、搜狐、虎嗅、Wikipedia などのアグリゲーター・百科事典・コンテンツファームは検索段階で拒否され、証拠プールにも画面の出典リンクにも入りません。ホワイトリストは `/api/source-policy` と画面の「信頼情報源ホワイトリスト」パネルで公開され、監査できます。
 
 各段階は `jobs.result.progress` に書き込まれ、Web 画面でリアルタイムのタイムラインとして描画されます。
 

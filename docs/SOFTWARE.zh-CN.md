@@ -1,6 +1,6 @@
 # NewsVerify 软件说明书
 
-**版本：** 0.5.1（Atlas） · **发布日期：** 2026-11-17  
+**版本：** 0.5.2（Verity） · **发布日期：** 2026-11-17  
 **代码仓库：** https://github.com/zixiang2008/NewsVerify  
 **在线控制台：** https://new.caishen.today（局域网：`http://192.168.8.253:8095`）
 
@@ -57,6 +57,19 @@ NewsVerify 是多个公开研究与评级传统的工程综合。它不购买、
 | ④ LLM 判定 | 只把证据片段交给结构化提示词 | 标签、置信度、理由、反证、缺口 |
 | ⑤ 媒体交叉核查 | 宽搜索结果按域名匹配 Top30，少量重点媒体补 `site:` 查询 | 30 家点亮/灰色 + 可点来源 |
 | ⑥ 持续追踪 | 按 6h / 24h / 周比较证据与判定指纹 | 仅实质变化时推送通知 |
+
+#### 可信来源白名单（v0.5.2 起）
+
+证据池采用严格白名单（`app/verification/source_policy.py`），只允许四类来源：
+
+| 类别 | 范围 | 理由 |
+| --- | --- | --- |
+| Top30 公信力媒体 | Reuters / AP / AFP / BBC 等 30 家及其权威变体域名 | 交叉核查的基准来源 |
+| 专业事实核查机构 | Snopes、FactCheck.org、PolitiFact、Full Fact、AFP Fact Check、Lead Stories 等 | 专门审核公开事实声明 |
+| 全球搜索引擎入口 | Google、Bing、DuckDuckGo、Yahoo、Brave、Startpage | 仅作为可追溯的检索入口，不充当编辑证据 |
+| 权威一手资料机构 | NASA、NOAA、WHO、UN、OECD、Science、PNAS 等 | 可直接核对的原始资料 |
+
+百度百科/文库、QQ、搜狐、虎嗅、维基百科等聚合站、百科站与内容农场在检索阶段即被拒绝，不进入证据池，也不会出现在前端「来源」链接中。白名单通过 `/api/source-policy` 与页面「可信来源白名单」面板公开，便于审计。
 
 每一步都会写入 `jobs.result.progress`，前端把它渲染成实时时间线。
 

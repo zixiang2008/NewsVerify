@@ -94,11 +94,30 @@ async def check_top_media(claim_text: str, max_per: int = 2) -> List[Dict]:
     每家含 hit_count 与 hits，前端据此点亮/置灰。
     """
     from app.verification.search import search_duckduckgo
+    from app.verification.source_policy import classify_source
     import asyncio
     from urllib.parse import urlparse
 
     def _hit(h):
-        return {"title": h.get("title", ""), "url": h.get("url", ""), "snippet": h.get("snippet", "")}
+        return {
+            "title": h.get("title", ""), "url": h.get("url", ""), "snippet": h.get("snippet", ""),
+            "source_type": h.get("source_type", ""),
+        }
+
+    def _clean(hits):
+        """Drop Baidu/QQ/aggregator results before they reach the UI."""
+        out = []
+        for h in hits:
+            if not isinstance(h, dict) or not h.get("url") or h.get("title") == "search error":
+                continue
+            category, host = classify_source(h["url"])
+            if category is None:
+                continue
+            item = _hit(h)
+            item["source_type"] = category
+            item["host"] = host
+            out.append(item)
+        return out
 
     # 初始化每家媒体的结果骨架
     result = {m["rank"]: {
@@ -117,9 +136,7 @@ async def check_top_media(claim_text: str, max_per: int = 2) -> List[Dict]:
     for res in searches:
         if not isinstance(res, list):
             continue
-        for h in res:
-            if not isinstance(h, dict) or not h.get("url") or h.get("title") == "search error":
-                continue
+        for h in _clean(res):
             dom = _match_media(h["url"])
             if dom:
                 r = domain_to_rank[dom]
@@ -135,7 +152,7 @@ async def check_top_media(claim_text: str, max_per: int = 2) -> List[Dict]:
             hits = await asyncio.wait_for(search_duckduckgo(q, max_results=max_per), timeout=10)
         except Exception:
             hits = []
-        return m["rank"], [_hit(h) for h in hits if isinstance(h, dict) and h.get("url") and h.get("title") != "search error"]
+        return m["rank"], _clean(hits)
 
     if missing_top:
         # 每批 4 家，避免并发过高被重置

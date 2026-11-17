@@ -1,6 +1,6 @@
 [project]
 name = "newsverify"
-version = "0.5.1"
+version = "0.5.2"
 description = "NewsVerify: personal news fact-checking and tracking service for NAS"
 requires-python = ">=3.11"
 dependencies = [

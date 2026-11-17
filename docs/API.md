@@ -8,6 +8,7 @@ Auth: header `X-API-Key: <key>` or query `?api_key=<key>`.
 - `GET /api/v1/status` — service status (includes `version`)
 - `GET /api/v1/version` — version, release date, codename, themes and release history
 - `GET /api/v1/top-media` — Top 30 credible media list
+- `GET /api/v1/source-policy` — trusted-source whitelist (media / fact-checkers / search engines / authorities / blocked examples)
 - `POST /api/v1/check` — submit news for verification
   body: `{"text": "...", "mode": "full|top30|method", "freq": "none|6h|24h|week"}`
   returns: `{"event_id", "job_id", "status": "queued"}`

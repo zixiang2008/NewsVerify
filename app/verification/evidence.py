@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.ingest.fetch import fetch_url
 from app.ingest.extract import extract_text
 from app.verification.search import unified_search
+from app.verification.source_policy import classify_source
 
 
 def _domain(url: str) -> str:
@@ -39,10 +40,15 @@ async def collect_evidence(claim_text: str, max_results: int = 8) -> List[Dict[s
     items: List[Dict[str, Any]] = []
     seen_urls = set()
     for q in queries:
-        res = await unified_search(q, max_results=max_results)
+        # Request a larger pool because the strict source whitelist discards
+        # aggregators and content farms (Baidu, QQ, Sohu, Wikipedia, ...).
+        res = await unified_search(q, max_results=max_results * 4)
         for r in res:
             url = r.get("url", "")
             if not url or url in seen_urls:
+                continue
+            source_type, host = classify_source(url)
+            if source_type is None:
                 continue
             seen_urls.add(url)
             fr = await fetch_url(url)
@@ -57,7 +63,8 @@ async def collect_evidence(claim_text: str, max_results: int = 8) -> List[Dict[s
                 "url": url,
                 "final_url": fr.final_url if not fr.error else url,
                 "snippet": snippet,
-                "domain": _domain(url),
+                "domain": host,
+                "source_type": source_type,
                 "content_hash": fr.content_hash,
                 "independence_chain_id": _chain_id(url, snippet),
                 "fetch_error": fr.error,

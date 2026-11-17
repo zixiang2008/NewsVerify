@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.5.1 (Atlas) · **Release date:** 2026-11-17  
+**Version:** 0.5.2 (Verity) · **Release date:** 2026-11-17  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -57,6 +57,19 @@ The six-rating-system metadata lives in `app/ratings/systems.py`. Every entry st
 | 4. LLM judgement | Structured prompt over evidence snippets only | `verdicts` with label, confidence, rationale, counter-argument, gaps |
 | 5. Media cross-check | Broad search results are domain-matched to the Top 30 panel; a few key outlets get supplemental `site:` queries | 30 cells with hit counts and openable URLs |
 | 6. Continuous tracking | Evidence and verdict fingerprints are compared at 6h / 24h / weekly intervals | Notifications only on substantive change |
+
+#### Trusted source whitelist (since v0.5.2)
+
+The evidence pool uses a strict whitelist (`app/verification/source_policy.py`) with four allowed categories:
+
+| Category | Scope | Reason |
+| --- | --- | --- |
+| Top 30 credible media | Reuters, AP, AFP, BBC and 26 others, plus authoritative domain variants | Cross-check baseline |
+| Professional fact-checkers | Snopes, FactCheck.org, PolitiFact, Full Fact, AFP Fact Check, Lead Stories, etc. | Dedicated review of public claims |
+| Global search engines | Google, Bing, DuckDuckGo, Yahoo, Brave, Startpage | Traceable retrieval entry points only, not editorial evidence |
+| Authoritative primary sources | NASA, NOAA, WHO, UN, OECD, Science, PNAS, etc. | Directly verifiable original material |
+
+Baidu Baike/Wenku, QQ, Sohu, Huxiu, Wikipedia and similar aggregators, encyclopedias and content farms are rejected during retrieval. They never enter the evidence pool or appear as openable source links in the console. The whitelist is published through `/api/source-policy` and a dashboard panel for auditability.
 
 Each step writes a progress entry into `jobs.result.progress`, which the web console renders as a live timeline.
 

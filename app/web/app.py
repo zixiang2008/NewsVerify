@@ -8,6 +8,7 @@ from app.db.session import get_sessionmaker
 from app.core.config import get_settings
 from app.version import VERSION, RELEASE_DATE, CODENAME, version_payload
 from app.verification.top_media import TOP_MEDIA, NOTE
+from app.verification.source_policy import classify_source
 from fastapi import Depends, HTTPException
 
 def verify_api_key(request: Request):
@@ -111,6 +112,13 @@ async def api_top_media():
     return {"media": TOP_MEDIA, "note": NOTE}
 
 
+@app.get("/api/source-policy")
+async def api_source_policy():
+    """可信来源白名单：只允许全球公信力靠前的媒体/核查机构/搜索引擎。"""
+    from app.verification.source_policy import source_policy_payload
+    return source_policy_payload()
+
+
 @app.get("/api/version")
 async def api_version():
     """当前版本、风格模板与更新记录（供 Web UI 展示）。"""
@@ -184,7 +192,9 @@ async def api_event_detail(event_id: str):
             ev_list = []
             for evi in evs:
                 src = await session.get(Source, evi.source_id)
-                ev_list.append({"snippet": evi.snippet, "stance": evi.stance, "url": src.url if src else "", "domain": src.domain if src else "", "title": src.title if src else ""})
+                src_url = src.url if src else ""
+                stype, _ = classify_source(src_url)
+                ev_list.append({"snippet": evi.snippet, "stance": evi.stance, "url": src_url, "domain": src.domain if src else "", "title": src.title if src else "", "source_type": stype or "untrusted"})
             v = next((x for x in verdicts if x.claim_id == c.id), None)
             claim_details.append({
                 "id": c.id, "text": c.text, "language": c.language,
@@ -388,6 +398,12 @@ async def api_v1_top_media(ok: bool = Depends(verify_api_key)):
     return {"media": TOP_MEDIA, "note": NOTE}
 
 
+@app.get("/api/v1/source-policy")
+async def api_v1_source_policy(ok: bool = Depends(verify_api_key)):
+    from app.verification.source_policy import source_policy_payload
+    return source_policy_payload()
+
+
 @app.post("/api/v1/check")
 async def api_v1_check(request: Request, ok: bool = Depends(verify_api_key)):
     body = await request.json()
@@ -458,7 +474,9 @@ async def api_v1_event_detail(event_id: str, ok: bool = Depends(verify_api_key))
             ev_list = []
             for evi in evs:
                 src = await session.get(Source, evi.source_id)
-                ev_list.append({"snippet": evi.snippet, "stance": evi.stance, "url": src.url if src else "", "domain": src.domain if src else "", "title": src.title if src else ""})
+                src_url = src.url if src else ""
+                stype, _ = classify_source(src_url)
+                ev_list.append({"snippet": evi.snippet, "stance": evi.stance, "url": src_url, "domain": src.domain if src else "", "title": src.title if src else "", "source_type": stype or "untrusted"})
             v = next((x for x in verdicts if x.claim_id == c.id), None)
             claim_details.append({
                 "id": c.id, "text": c.text, "language": c.language,
@@ -895,8 +913,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
         </div>
         <div class="method-card">
           <h4>2. 证据检索与溯源</h4>
-          <p>多查询搜索（原始主张 + 反证导向查询），抓取原文、抽取正文、按域名/链路去重，记录发布日期与抓取时间。</p>
-          <div class="src">来源：Google Fact Check API + DuckDuckGo；实现：app/verification/evidence.py</div>
+          <p>多查询搜索（原始主张 + 反证导向查询）；严格白名单只保留全球公信力靠前的媒体、专业核查机构、搜索引擎入口与权威一手资料；抓取原文并去重。</p>
+          <div class="src">来源：Top30 媒体 + Google Fact Check + 搜索引擎；实现：source_policy.py / evidence.py</div>
         </div>
         <div class="method-card">
           <h4>3. 独立性判定</h4>
@@ -917,6 +935,11 @@ textarea:focus{outline:none;border-color:var(--accent)}
           <h4>6. 持续追踪</h4>
           <p>事件/主张级追踪，证据指纹差异检测，仅实质性变化才通知，支持 6h/24h/周，去重与取消。</p>
           <div class="src">来源：任务书追踪规范；实现：app/tracking/*</div>
+        </div>
+        <div class="method-card">
+          <h4>7. 可信来源白名单</h4>
+          <p>证据池仅收录公信力靠前的媒体、专业核查机构、全球搜索引擎入口与权威一手资料；百度、QQ、搜狐、虎嗅等聚合站与百科站一律拒绝。</p>
+          <div class="src"><button class="mini-btn" onclick="showSourcePolicy()">查看完整白名单 →</button></div>
         </div>
       </div>
 
@@ -1040,6 +1063,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
 <script>
 const APP_VERSION='__APP_VERSION__';
+const STYPE_LABEL={media:'Top30 媒体',fact_checker:'专业核查',search_engine:'搜索引擎',authority:'权威机构',untrusted:'未通过白名单'};
 const THEMES=[
   {key:'aurora',name:'极光 · Aurora',desc:'深蓝玻璃质感，默认风格',colors:['#08101f','#38bdf8','#34d399']},
   {key:'paper',name:'纸张 · Paper',desc:'浅色阅读友好风格',colors:['#f5f7fb','#2563eb','#0d9488']},
@@ -1086,6 +1110,24 @@ async function showVersion(){
     box.innerHTML=html;
   }catch(e){
     box.innerHTML=`<h2>版本与更新记录</h2><div class="sub">当前版本 v${APP_VERSION}</div><p class="note">版本详情加载失败：${esc(e.message)}</p>`;
+  }
+}
+async function showSourcePolicy(){
+  const bg=document.getElementById('modalBg'),box=document.getElementById('modalContent');
+  box.innerHTML='<h2>可信来源白名单</h2><div class="sub">正在加载白名单…</div>';bg.style.display='flex';
+  try{
+    const d=await(await fetch('/api/source-policy')).json();
+    const group=(title,arr,fmt)=>`<h3>${esc(title)}（${arr.length}）</h3><div class="note" style="line-height:1.9">${arr.map(x=>esc(fmt(x))).join(' · ')}</div>`;
+    let html=`<h2>可信来源白名单 <span class="badge">Strict Whitelist</span></h2>`;
+    html+=`<div class="sub">${esc(d.note)}</div>`;
+    html+=group('① 全球公信力 Top 30 媒体',d.media,x=>x.name+' ('+x.domain+')');
+    html+=group('② 专业事实核查机构',d.fact_checkers,x=>x);
+    html+=group('③ 全球搜索引擎入口',d.search_engines,x=>x);
+    html+=group('④ 权威一手资料机构',d.authorities,x=>x);
+    html+=`<h3>明确拒绝的来源</h3><div class="note" style="line-height:1.9">${d.blocked_examples.map(x=>esc(x)).join(' · ')}</div>`;
+    box.innerHTML=html;
+  }catch(e){
+    box.innerHTML=`<h2>可信来源白名单</h2><p class="note">加载失败：${esc(e.message)}</p>`;
   }
 }
 let allEvents=[]; let filter='all';
@@ -1308,7 +1350,7 @@ async function showDetail(id){
     if(c.evidence&&c.evidence.length){
       html+=`<h3>证据（${c.evidence.length}）</h3>`;
       for(const ev of c.evidence){
-        html+=`<div class="ev"><a href="${ev.url}" target="_blank">${ev.title||ev.domain}</a><br>${(ev.snippet||'').slice(0,220)}</div>`;
+        html+=`<div class="ev"><a href="${ev.url}" target="_blank">${ev.title||ev.domain}</a>${ev.source_type?`<span class="note" style="margin-left:6px">[${STYPE_LABEL[ev.source_type]||ev.source_type}]</span>`:''}<br>${(ev.snippet||'').slice(0,220)}</div>`;
       }
     }
   }
