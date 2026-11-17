@@ -1,0 +1,210 @@
+# NewsVerify 软件说明书
+
+**版本：** 0.5.0（Atlas） · **发布日期：** 2026-11-17  
+**代码仓库：** https://github.com/zixiang2008/NewsVerify  
+**在线控制台：** https://new.caishen.today（局域网：`http://192.168.8.253:8095`）
+
+本文档说明 NewsVerify 为什么存在、借鉴了哪些科研与评级资料、用什么论证方法从证据得出结论、所有数据源如何依据与组合，以及最近一次本地实验的结果。适合运维者、复核者以及需要理解或维护系统的 Agent 阅读。
+
+---
+
+## 1. 为什么要有这个软件
+
+新闻、社交平台和生成式模型产出说法的速度，远远超过个人核查的速度。截图、转发和 AI 摘要可能同样“看起来很确定”，但证据基础完全不同。人工核查慢，关键词匹配不可靠，商业核查接口又不透明、无法部署到自己的机器上。
+
+NewsVerify 因此被设计为一个**自建、可审计的说法核查工作台**。它不要求读者只相信模型的一句话，而是：
+
+1. 把新闻拆成可独立验证的原子主张；
+2. 为每条主张检索开放网络证据，并专门做反证导向查询；
+3. 折叠通稿转载链，避免“很多家都这么说”被误当成独立多源；
+4. 让大模型在六个固定标签中选择，并必须给出理由、反证和证据缺口；
+5. 用 30 家高公信力媒体做交叉验证，保存可点开的来源链接；
+6. 持续追踪事件，只有证据指纹真的变化时才通知。
+
+设计原则是：**没有证据就说“证据不足”，绝不凭空说“支持”。**
+
+---
+
+## 2. 借鉴的科研资料与外部依据
+
+NewsVerify 是多个公开研究与评级传统的工程综合。它不购买、不转售授权评级数据，也不伪造官方分数。
+
+| 资料 | 贡献 | 在系统中的用法 |
+| --- | --- | --- |
+| FEVER 式主张核查 | 把文档拆成原子主张，分别检索支持/反驳证据 | `app/verification/claims.py`、`evidence.py` |
+| AVeriTeC（真实世界主张核查） | 证据优先、显式记录证据缺口、保留不确定性 | 判定结构含 `evidence_gaps`、`counter_argument` 与六类标签 |
+| Google Fact Check Tools API | 专业事实核查机构的 `textualRating` 与审核日期 | 配置密钥后由 `search_google_factcheck()` 作为官方补充置前 |
+| Media Bias/Fact Check（MBFC） | 公开的“事实报道”分级：Very High / High / Mostly Factual | 作为 Top30 榜单 `factual` 字段的参考口径；不调用付费接口 |
+| Reuters Institute《Digital News Report》 | 跨国家公众媒体信任度研究 | 作为媒体排序的背景依据，不充当单篇报道评分 |
+| NewsGuard、Ad Fontes Media、AllSides | 可信度 / 偏见分类体系 | 在 `app/ratings/systems.py` 中标为 `not_connected`，未授权则不显示分数 |
+| Pew Research、无国界记者组织 RSF | 受众行为与新闻自由环境 | 标为 `context_only`，提醒国家环境不等于事实真伪 |
+| Veracity（arXiv:2506.15794）等开源系统 | 来源透明度三件套：可靠性 + 解释 + 可追溯链接；来源独立性 | 启发 `independence_chain_id`、可点来源列表与报道条数 |
+| OpenAI 兼容 LLM API | 只基于检索证据做结构化推理 | 主备端点自动切换，输出受约束的 JSON 判定 |
+
+六大评级体系元数据集中在 `app/ratings/systems.py`，每一项都写明授权状态。缺失的评级就显示为缺失，不猜测。
+
+---
+
+## 3. 用了什么论证方法，得出什么结论
+
+### 3.1 六阶段核查流水线
+
+| 阶段 | 操作 | 产物 |
+| --- | --- | --- |
+| ① 主张拆分 | LLM 把输入拆成受配置上限约束的原子主张 | `claims` |
+| ② 证据检索 | 每条主张做原句查询 + 反证导向查询 | `sources` / `evidence` 候选 |
+| ③ 独立性判定 | URL 去重 + 基于正文指纹的 `independence_chain_id`，折叠转载链 | 独立证据集 |
+| ④ LLM 判定 | 只把证据片段交给结构化提示词 | 标签、置信度、理由、反证、缺口 |
+| ⑤ 媒体交叉核查 | 宽搜索结果按域名匹配 Top30，少量重点媒体补 `site:` 查询 | 30 家点亮/灰色 + 可点来源 |
+| ⑥ 持续追踪 | 按 6h / 24h / 周比较证据与判定指纹 | 仅实质变化时推送通知 |
+
+每一步都会写入 `jobs.result.progress`，前端把它渲染成实时时间线。
+
+### 3.2 允许的结论
+
+判定器必须且只能选择以下之一：
+
+- `supported`：有充分支持证据；
+- `refuted`：有充分反驳证据；
+- `mixed`：支持与反驳并存；
+- `insufficient_evidence`：未找到可靠证据（默认兜底）；
+- `outdated`：过去为真，现已变化；
+- `not_checkable`：主观评价、未来预测等无法核查。
+
+### 3.3 防止过度断言的规则
+
+- 指控不等于事实，调查不等于定罪。
+- 没有证据不等于“假”。
+- 页面抓取失败标记为抓取失败，不计为“没有证据”。
+- 没有可打开来源 URL 的判定会被拒绝或降级为 `insufficient_evidence`。
+- 同一通稿的转载只算一条独立性链。
+- 政治与快速变化事件保留时间边界和不确定性。
+- 所有外部 URL 在访问前做 SSRF 校验。
+
+**最终结论形态**：每条主张给出一个受约束标签 + 置信度 + 理由 + 反证 + 证据缺口 + 引用 URL；每个事件给出总结、30 家媒体覆盖图和追踪状态。系统报告的是“检索时刻证据支持到什么程度”，不宣称永久真理。
+
+---
+
+## 4. 所有数据源的依据、来源与组合方式
+
+### 4.1 输入通道
+
+| 通道 | 入口 | 说明 |
+| --- | --- | --- |
+| 网页控制台 | `POST /submit` 或 `POST /api/v1/check` | 文本框 + 模式（full / top30 / method）+ 追踪频率 |
+| Telegram Bot | `/check`、`/deep`、`/track`、`/status`、`/history` | aiogram 长轮询；token 失效时优雅降级 |
+| Public API v1 | API Key 请求头 | 供 Agent 与自动化系统调用 |
+
+### 4.2 检索与抽取
+
+- `unified_search()` 按配置选择搜索提供方：保留历史函数名的 `ddgs`、Brave Search 或 SearXNG。
+- 在 NAS 网络里，`search_duckduckgo()` 显式优先锁定 `yahoo` 后端，失败再退 `duckduckgo`；避免 ddgs 轮询 7 个后端，Top30 阶段从约 146 秒降到约 44 秒。
+- 配置密钥时，Google Fact Check 结果作为官方核查材料置前，然后按 URL 去重。
+- `fetch_url()` 校验 URL、拦截私网目标并计算内容哈希。
+- `extract_text()` 用 trafilatura 类抽取获得正文；送入判定器的片段有长度上限。
+
+### 4.3 来源模型与独立性
+
+每条证据保存 `url`、`domain`、`content_hash`、`independence_chain_id`、`snippet_hash`、抓取状态和可选发布时间。独立性链 ID 由域名 + 正文前 80 个归一化字符的 SHA-256 前缀组成。相同链条被折叠，因此通稿瀑布不会被误当成许多独立证人。
+
+### 4.4 Top30 媒体榜依据
+
+`app/verification/top_media.py` 按“事实准确性 + 编辑独立性”定义 30 家媒体：
+
+1. 全球通讯社与公共广播：Reuters、AP、AFP、BBC、NPR、PBS、DW、France 24、NHK World、ABC AU；
+2. 国际/全国报纸与财经媒体：NYT、Washington Post、Guardian、FT、WSJ、Economist、Time、Newsweek、CNN、Al Jazeera；
+3. 专业事实核查、学术与区域权威：Snopes、FactCheck.org、Politifact、Full Fact、The Conversation、Scientific American、Nature News、The Canadian Press、The Hindu、Sydney Morning Herald。
+
+`check_top_media()` 先做少量宽搜索，把结果按域名匹配到榜单（处理 `www.` 与 `bbc.co.uk` 等别名），再对少量重要未命中媒体补 `site:` 查询。前端在 `hit_count > 0` 时点亮绿灯，否则灰色，并展示每一条来源链接。
+
+### 4.5 组合顺序
+
+```
+用户输入
+  -> Event + queued Job
+  -> claims[]
+  -> （原句搜索 + 反证搜索）-> sources[] -> 独立性去重
+  -> verdicts[]（六标签受约束 LLM 输出）
+  -> Top30 覆盖图（域名匹配 + site: 补充）
+  -> job.result { summary, progress, top_media, media_hits, total_reports }
+  -> Telegram 推送 + 网页渲染
+  -> Subscription 轮询 -> 指纹差异 -> Notification
+```
+
+LLM 通过 OpenAI 兼容客户端访问主备端点（`LLM_BASE_URL`、`LLM_BASE_URL_FALLBACK`）。关闭客户端内部重试，由 `app/verification/llm.py` 做端点切换和小型熔断，避免长时间重试风暴。
+
+### 4.6 持久化
+
+PostgreSQL 表：`events`、`claims`、`sources`、`evidence`、`verdicts`、`jobs`、`subscriptions`、`notifications`。子表使用 `ON DELETE CASCADE`。任务结果用 JSON 字段保存，使流水线演进灵活，同时核心关系表保持可审计。
+
+---
+
+## 5. 最终的实验结果
+
+以下结果来自群晖 N150-P NAS 上的本地部署，不是合成基准测试。
+
+| 检查项 | 结果 |
+| --- | --- |
+| `/health` | HTTP 200 |
+| 前端 JavaScript 语法 | `node --check` 通过；v0.5.0 后渲染脚本约 2.77 万字符 |
+| `/api/top-media` | 返回 30 家，含排名、事实等级、独立性、类型与 URL |
+| 端到端完整核查 | 样本任务约 101 秒完成，状态 `done` |
+| 媒体交叉核查 | 30 家中 10 家点亮，20 条可打开的相关来源 |
+| 局域网与公网 | `http://192.168.8.253:8095` 与 `https://new.caishen.today` 均更新为新构建 |
+| API 主备切换 | 主备端点均为 HTTP 200；强制主失败后成功切到备用 |
+| 搜索优化 | 优先 yahoo 后端，Top30 阶段本地从约 146 秒降到约 44 秒 |
+| 历史清理 | 备份后删除 15 个 failed 任务与 1 个孤立测试事件，剩余 8 个全部成功 |
+| 多风格界面 | 4 套模板实时切换，选择本地持久化，版本弹窗展示更新历史 |
+
+解读：在本地 NAS 上，流水线约两分钟内给出稳定、可检查的结果。主要耗时是媒体交叉核查，因此采用“宽搜索域名匹配优先、定点 `site:` 补充”的策略。系统面向个人与小团队使用，不构成法律或专业裁决权威。
+
+---
+
+## 6. 如何使用
+
+### 6.1 网页控制台
+
+1. 打开局域网或公网地址，输入 PIN 登录。
+2. 可在顶部选择风格模板（极光 / 纸张 / 石墨 / 终端）。
+3. 粘贴文本或链接，选择模式与追踪频率，然后提交。
+4. 任务会立即出现在历史顶部；运行中详情弹窗每 3 秒刷新。
+5. 点击任务查看判定、证据、进度时间线和 30 家媒体覆盖图。
+6. 用「📡 追踪状态」查看所有更新，用「⚙️ 设置」修改频率、下次时间与暂停状态。
+7. 底部系统面板显示 CPU、内存、磁盘与外部 API 实时状态。
+
+### 6.2 Telegram
+
+`/help`、`/check <文本>`、`/deep <文本>`、`/track <事件ID> [6h|24h|week]`、`/untrack`、`/status`、`/history`、`/privacy`。
+
+### 6.3 Public API v1
+
+```bash
+curl -H "X-API-Key: $API_KEY" https://new.caishen.today/api/v1/version
+curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
+  -d '{"text":"...","mode":"full","freq":"none"}' \
+  https://new.caishen.today/api/v1/check
+```
+
+---
+
+## 7. 版本与发布流程
+
+`app/version.py` 是版本号和更新记录的唯一编写处。网页徽标、登录页、`/api/version`、`/api/v1/status`、`pyproject.toml`、`compose.yaml`、README 与 CHANGELOG 均从它派生或与之对齐。
+
+每次发布：
+
+1. 更新 `app/version.py` 的 `VERSION`、`RELEASE_DATE`、`CODENAME` 与 `RELEASES`；
+2. 同步 `pyproject.toml`、`compose.yaml`、`CHANGELOG.md`；
+3. 更新英文、中文、日文说明文档；
+4. 运行 `./scripts/sync_github.sh` 提交并推送脱敏源码；
+5. 部署到 NAS，验证 `/health`、`/api/version` 与页面版本徽标。
+
+---
+
+## 8. 局限
+
+- 评级是参考而非授权，媒体顺序是咨询性排序。
+- 搜索引擎可能限流，很新或未被索引的事件覆盖可能不完整。
+- LLM 判定是概率性的，必须与证据和缺口一起阅读。
+- PIN 保护的是个人控制台；若开放给多人，应增加 HTTPS、按用户鉴权与限流。
+- 结果是某一时刻的快照。持续追踪正是为了应对事实会变化。
