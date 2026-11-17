@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.6.1 (Echo) · **Release date:** 2026-11-17  
+**Version:** 0.7.0 (Bridge) · **Release date:** 2026-11-17  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -230,6 +230,15 @@ For every release:
 - **Auto-hide**: the panel fades out after 5 seconds without interaction and can also be closed with the × button. Any click, mouse move, drag or wheel event restarts the timer. Fading out only collapses the panel — playback continues.
 - **Volume**: the range input uses `oninput`, so changes apply while dragging, with a percentage readout. The selected track and volume persist in `localStorage` (`nv_music_track`, `nv_music_vol`).
 - **Verification**: rendered-HTML JavaScript syntax validation (`ast` + `node --check`) and an interaction simulation test (play / stop / switch / volume) run before release.
+
+## 7.7 New in v0.7.0 — interactive IM onboarding wizard
+
+- **Design reference**: the adapter-driven, config-based WebUI wizards of AstrBot / NoneBot / Koishi — but **without adopting their runtime** (which would bloat NAS dependencies and rewrite the architecture). Only the interactive configuration experience is added on top of the existing `app/integrations/`.
+- **Wizard** `/admin/im`: 11 mainstream platforms (Telegram, Discord, Slack, Feishu, DingTalk, WeCom, WeChat OA, QQ/OneBot, LINE, Matrix, generic webhook) shown as cards. Four steps: (1) official credential instructions with direct admin-console links, (2) a dynamic credential form, (3) QR scan / inbound URL copy, (4) a real test message.
+- **No code, no restart**: credentials are written to `im_channel_configs` (`app/integrations/channel_store.py`) and hot-loaded by `ChannelRegistry.set_db_credentials()` on save. Values are masked on read (`1234••••mnop`) and a mask placeholder never overwrites the real secret. Legacy `NV_IM_*` env vars remain as a compatibility fallback.
+- **QR binding**: `segno` renders a `t.me/<bot>?start` SVG QR for Telegram; scanning and sending `/start` makes the unified webhook record `bound_chat_id`, and the wizard polls `/bind-status`. Feishu / DingTalk / WeCom / LINE / QQ OneBot use their own official scan flows, so the wizard surfaces official scan guidance plus one-click copy of the inbound URL.
+- **Real tests**: `app/integrations/__init__.py` builds platform-native message bodies (Feishu `msg_type:text` + timestamp signature, DingTalk `msgtype:text` + HMAC-SHA256 signing, WeCom, Discord `content`, Slack `text`, LINE `messages`, Matrix `m.text`, Telegram Bot API); results and errors are written back to the status panel.
+- **Verification**: 15 onboarding-logic checks cover guide completeness, masking/merging, platform payloads and signing, safe failure when unconfigured, and QR generation; rendered JS is checked with `node --check`.
 
 ---
 

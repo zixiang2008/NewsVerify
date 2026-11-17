@@ -1,6 +1,6 @@
 # NewsVerify ソフトウェア仕様書
 
-**バージョン：** 0.6.1（Echo） · **リリース日：** 2026-11-17  
+**バージョン：** 0.7.0（Bridge） · **リリース日：** 2026-11-17  
 **リポジトリ：** https://github.com/zixiang2008/NewsVerify  
 **公開コンソール：** https://new.caishen.today（LAN：`http://192.168.8.253:8095`）
 
@@ -230,6 +230,15 @@ curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
 - **自動フェードアウト**：5 秒操作がないとパネルがフェードアウトし、× ボタンから手動で閉じることもできます。クリック・マウス移動・ドラッグ・スクロールでタイマーが再開します。フェードアウトしても再生は続きます。
 - **音量**：スライダーは `oninput` を使用し、ドラッグ中にリアルタイムで反映され、パーセンテージも表示します。曲と音量は `localStorage`（`nv_music_track`、`nv_music_vol`）に保存されます。
 - **検証**：リリース前にレンダリング後スクリプト構文チェック（`ast` + `node --check`）と操作シミュレーションテスト（再生/停止/切替/音量）を実行します。
+
+## 7.7 v0.7.0 の新機能：対話型 IM 接続ウィザード
+
+- **設計参考**：AstrBot / NoneBot / Koishi などの成熟したマルチプラットフォーム框架的「アダプター＋設定駆動＋WebUI ウィザード」方式を参考にしつつ、**ランタイム自体は導入しません**（NAS の依存肥大化とアーキテクチャ書き換えを避ける）。既存の `app/integrations/` の上に対話型設定体験を追加しただけです。
+- **ウィザード** `/admin/im`：11 の主要プラットフォーム（Telegram / Discord / Slack / 飛書 / 釘釘 / WeCom / 公式アカウント / QQ・OneBot / LINE / Matrix / 汎用 Webhook）をカード表示。4 ステップ：① 公式認証情報の取得案内（公式管理画面への直リンク付き）→ ② 動的フォーム入力 → ③ QR スキャン / 受信 URL コピー → ④ 実メッセージテスト。
+- **コード不要・再起動不要**：認証情報は `im_channel_configs`（`app/integrations/channel_store.py`）に保存し、保存時に `ChannelRegistry.set_db_credentials()` でホットロード。表示時はマスキング（`1234••••mnop`）し、マスク値が実際の秘密を上書きすることはありません。旧 `NV_IM_*` 環境変数は互換フォールバックとして残しています。
+- **QR 連携**：Telegram は `segno` で `t.me/<bot>?start` の SVG QR を生成し、スキャン後に `/start` を送ると統一 webhook が `bound_chat_id` を記録、ウィザードが `/bind-status` をポーリングして完了を表示します。飛書/釘釘/WeCom/LINE/QQ OneBot は各公式スキャン手順が異なるため、公式案内と受信 URL のワンクリックコピーを提供します。
+- **実テスト**：`app/integrations/__init__.py` が各プラットフォーム公式形式のメッセージ（飛書 `msg_type:text`＋タイムスタンプ署名、釘釘 `msgtype:text`＋HMAC-SHA256 署名、WeCom、Discord `content`、Slack `text`、LINE `messages`、Matrix `m.text`、Telegram Bot API）を構築し、結果とエラーを状態パネルへ書き戻します。
+- **検証**：15 項目の接続ロジックテスト（ガイド完全性、マスキング/マージ、各プラットフォーム形式と署名、未設定時の安全失敗、QR 生成）と、レンダリング後 JS の `node --check` を実施。
 
 ---
 

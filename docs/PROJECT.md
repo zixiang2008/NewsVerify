@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.6.1）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.7.0）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -409,3 +409,14 @@ $DOCKER compose logs -f bot worker
 - **5 秒自动淡出**：`.music-panel` 使用 `opacity + transform + transition`，`openMusicPanel()` 先设 `display:block` 再于下一帧加 `.show`，`closeMusicPanel()` 加 `.hide` 后 360ms 才 `display:none`；`resetMusicPanelHideTimer()` 由面板上的 `click/mousemove/input/wheel/touchstart` 事件重置，5 秒无操作触发淡出。淡出仅隐藏面板，`nvMusicOn` 不变，播放继续。
 - **音量实时化**：`<input type=range oninput=...>` 替代原 `onchange`，`setMusicVolume()` 用 `setTargetAtTime` 平滑改主增益并显示百分比；曲目与音量分别持久化到 `nv_music_track` / `nv_music_vol`。
 - **验证方式**：`ast` 提取 HTML 字面量 → 正则取 `<script>` → `node --check` 校验运行时脚本；另用 mock DOM/Web Audio 的 Node 脚本实测播放、停止、切换、音量、面板淡出逻辑。
+
+### 13.8 v0.7.0：交互式 IM 接入向导
+
+- **需求**：原有接入靠改 `.env` + 重启容器，用户希望像成熟框架那样在网页扫码 / 填 Token 辅助、带测试、方便对接。
+- **技术决策**：不引入 AstrBot 运行时（完整框架、依赖重、会重写现有应用），只借鉴其「适配器 + 配置驱动 + WebUI 向导」设计，在现有 `app/integrations/` 上补齐交互体验。
+- **新文件**：`app/integrations/guides.py`（11 平台字段/步骤/扫码元数据）、`app/integrations/channel_store.py`（DB 凭证 CRUD + 脱敏/合并）、`app/web/im_wizard.py`（向导页 HTML/CSS/JS）。
+- **数据模型**：`IMChannelConfig` 表存 key / credentials(JSON) / bound_chat_id / 测试状态，凭证读时脱敏，`merge_credentials()` 保证掩码占位不覆盖真实密钥。
+- **热加载**：`ChannelRegistry.rebuild()` 从 DB 凭证构建各渠道适配器（env 兜底），`set_db_credentials()`/`remove_db_credentials()` 保存后立即重建；`@app.on_event("startup")` 调 `reload_from_db()` 保证重启后仍生效。
+- **平台消息格式**：`GenericWebhookChannel._payload()` 按平台构造官方消息体，飞书/钉钉实现时间戳与 HMAC-SHA256 加签；`TelegramChannel` 从凭证读 Token 与允许用户 ID。
+- **扫码**：`/qrcode` 用 segno 生成 SVG（Telegram `t.me/<bot>` 深链，其它平台跳官方配置台）；入站 webhook 收到 Telegram `/start` 时写 `bound_chat_id`，`/bind-status` 供向导轮询。
+- **验证**：15 项逻辑测试 + 前后端 JS `node --check` 通过；新增 segno 依赖。

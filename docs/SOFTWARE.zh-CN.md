@@ -1,6 +1,6 @@
 # NewsVerify 软件说明书
 
-**版本：** 0.6.1（Echo） · **发布日期：** 2026-11-17  
+**版本：** 0.7.0（Bridge） · **发布日期：** 2026-11-17  
 **代码仓库：** https://github.com/zixiang2008/NewsVerify  
 **在线控制台：** https://new.caishen.today（局域网：`http://192.168.8.253:8095`）
 
@@ -230,6 +230,15 @@ curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
 - **自动淡出**：面板在 5 秒无操作后淡出，也可点 × 手动关闭；点击、移动鼠标、拖动音量或滚动都会重新计时。淡出只收起面板，不中断播放。
 - **音量**：滑块使用 `oninput`，拖动过程中实时生效并显示百分比；曲目与音量保存在 `localStorage`（`nv_music_track`、`nv_music_vol`）。
 - **验证**：发布前执行渲染后脚本语法校验（`ast` + `node --check`）与交互行为模拟测试（播放/停止/切换/音量）。
+
+## 7.7 v0.7.0 新增：交互式即时通讯接入向导
+
+- **设计来源**：参考 AstrBot、NoneBot、Koishi 等成熟多平台机器人框架的「适配器 + 配置驱动 + WebUI 向导」模式，但**不引入其运行时**（避免 NAS 依赖膨胀、架构重写），只在现有 `app/integrations/` 之上补齐交互式配置体验。
+- **接入向导** `/admin/im`：11 个主流平台（Telegram、Discord、Slack、飞书、钉钉、企业微信、微信公众号、QQ/OneBot、LINE、Matrix、通用 Webhook）以卡片展示，进入后分四步：① 官方凭证获取指引（含官方配置台直达链接与逐步说明）→ ② 动态表单填写凭证 → ③ 扫码 / 接收地址复制 → ④ 真实消息测试。
+- **免代码免重启**：凭证写入数据库表 `im_channel_configs`（`app/integrations/channel_store.py`），网页保存后通过 `ChannelRegistry.set_db_credentials()` 热加载即时生效；页面回显自动脱敏（`1234••••mnop`），掩码提交不覆盖真实密钥；旧的 `NV_IM_*` 环境变量保留为兼容兜底。
+- **扫码绑定**：Telegram 由 `segno` 生成 `t.me/<bot>?start` 深链 SVG 二维码，用户扫码发送 `/start` 后，统一 webhook 自动记录 `bound_chat_id`，向导轮询 `/bind-status` 显示绑定完成；飞书、钉钉、企业微信、LINE、QQ/OneBot 因官方绑定流程不同，提供官方扫码入口说明与统一接收地址一键复制。
+- **真实测试**：`app/integrations/__init__.py` 按各平台官方消息格式构造测试消息（飞书 `msg_type:text` + 时间戳签名、钉钉 `msgtype:text` + HMAC-SHA256 加签、企业微信、Discord `content`、Slack `text`、LINE `messages`、Matrix `m.text`、Telegram Bot API），测试结果与错误回写状态面板。
+- **验证**：15 项接入逻辑测试覆盖平台引导完整性、脱敏/合并、各平台消息体与加签、未配置安全失败、二维码生成；并对渲染后 JS 执行 `node --check`。
 
 ---
 
