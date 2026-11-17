@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.5.2 (Verity) · **Release date:** 2026-11-17  
+**Version:** 0.6.0 (Prism) · **Release date:** 2026-11-17  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -211,6 +211,17 @@ For every release:
 3. Update the English, Chinese and Japanese README/software documents.
 4. Run `./scripts/sync_github.sh` to commit and push the sanitised source.
 5. Deploy to the NAS and verify `/health`, `/api/version` and the UI version badge.
+
+---
+
+## 7.5 New in v0.6.0
+
+- **Themes & music**: nine switchable themes (Aurora/Paper/Slate/Terminal/Ocean/Forest/Sunset/Violet/Mono) with local persistence; generative Web Audio ambient music (rain/waves/forest/night) with play/stop, track switching and volume, no external audio files.
+- **Readable sources & visuals**: permanent scrollbar on the Top 30 panel; each evidence title shows a bracketed tag with outlet, global credibility rank, factual grade and report date.
+- **Compliant collection** (`app/ingest/open_web.py`): public RSS / Google News RSS widen candidate discovery; robots.txt is respected, per-host rate limiting and bounded retries are used; no login/paywall/CAPTCHA bypass; every candidate still passes the trusted-source whitelist.
+- **Multi-IM access** (`app/integrations/`): following the adapter + config-driven + unified-entry pattern of mature frameworks (NoneBot/OneBot, Kirara AI), adapters for Telegram, Discord, Slack, Feishu, DingTalk, WeCom, WeChat OA, QQ/OneBot, LINE, Matrix and generic webhooks; unified entry `POST /api/v1/im/{key}/webhook`.
+- **Admin console** `/admin` (PIN `1314`): view masked API config, channel status and send test replies; `.env` changes require a container restart.
+- **Theory page** `/theory`: public page with methodology, credibility-band origins, an SVG system diagram, itemised citations and academic/global assessment.
 
 ---
 

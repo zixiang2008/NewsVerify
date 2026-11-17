@@ -39,39 +39,51 @@ async def collect_evidence(claim_text: str, max_results: int = 8) -> List[Dict[s
     queries.append(f"{claim_text} (refutation OR false OR debunk)")
     items: List[Dict[str, Any]] = []
     seen_urls = set()
+
+    # v0.6.0: compliant open-web discovery (Google News RSS + optional custom
+    # feeds). This only widens candidate discovery; every hit still passes the
+    # strict source whitelist before it can enter the evidence pool.
+    candidate_hits: List[Dict[str, Any]] = []
     for q in queries:
-        # Request a larger pool because the strict source whitelist discards
-        # aggregators and content farms (Baidu, QQ, Sohu, Wikipedia, ...).
         res = await unified_search(q, max_results=max_results * 4)
-        for r in res:
-            url = r.get("url", "")
-            if not url or url in seen_urls:
-                continue
-            source_type, host = classify_source(url)
-            if source_type is None:
-                continue
-            seen_urls.add(url)
-            fr = await fetch_url(url)
-            title, text = ("", "")
-            if not fr.error and fr.text:
-                title, text = extract_text(fr.text, url)
-            if not title:
-                title = r.get("title", "")
-            snippet = (text[:600] if text else r.get("snippet", ""))
-            items.append({
-                "title": title,
-                "url": url,
-                "final_url": fr.final_url if not fr.error else url,
-                "snippet": snippet,
-                "domain": host,
-                "source_type": source_type,
-                "content_hash": fr.content_hash,
-                "independence_chain_id": _chain_id(url, snippet),
-                "fetch_error": fr.error,
-                "published_at": None,
-            })
-            if len(items) >= max_results * 2:
-                break
+        candidate_hits.extend(res)
+    try:
+        from app.ingest.open_web import enhanced_collect, feed_to_hit
+        extra = await enhanced_collect(claim_text[:160], claim_text, max_results=max_results * 2)
+        for it in extra.items:
+            candidate_hits.append(feed_to_hit(it))
+    except Exception:
+        pass
+
+    for r in candidate_hits:
+        url = r.get("url", "")
+        if not url or url in seen_urls:
+            continue
+        source_type, host = classify_source(url)
+        if source_type is None:
+            continue
+        seen_urls.add(url)
+        fr = await fetch_url(url)
+        title, text = ("", "")
+        if not fr.error and fr.text:
+            title, text = extract_text(fr.text, url)
+        if not title:
+            title = r.get("title", "")
+        snippet = (text[:600] if text else r.get("snippet", ""))
+        published_at = r.get("published_at") or None
+        items.append({
+            "title": title,
+            "url": url,
+            "final_url": fr.final_url if not fr.error else url,
+            "snippet": snippet,
+            "domain": host,
+            "source_type": source_type,
+            "content_hash": fr.content_hash,
+            "independence_chain_id": _chain_id(url, snippet),
+            "fetch_error": fr.error,
+            "published_at": published_at,
+            "discovery": r.get("discovery", ""),
+        })
         if len(items) >= max_results * 2:
             break
     # Dedup by independence chain (collapse same chain)

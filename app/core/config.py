@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     brave_search_api_key: str = Field(default="", alias="BRAVE_SEARCH_API_KEY")
     google_factcheck_api_key: str = Field(default="", alias="GOOGLE_FACTCHECK_API_KEY")
     searxng_base_url: str = Field(default="", alias="SEARXNG_BASE_URL")
+    # Comma-separated public RSS/Atom feed URLs for compliant open-web discovery
+    custom_feed_urls: str = Field(default="", alias="CUSTOM_FEED_URLS")
 
     # Budgets
     per_check_budget_usd: float = Field(default=0.10, alias="PER_CHECK_BUDGET_USD")

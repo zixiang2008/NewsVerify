@@ -1,8 +1,23 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.5.2 (Verity, 2026-11-17)**.
+All notable changes to NewsVerify are documented here. The current version is **0.6.0 (Prism, 2026-11-17)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.6.0 — Prism (2026-11-17)
+
+### Added
+- Nine switchable UI themes (adds Ocean / Forest / Sunset / Violet / Mono alongside Aurora / Paper / Slate / Terminal).
+- Ambient background music player with four generative Web Audio tracks, play/stop, track switching and volume control (no external audio files).
+- Unified instant-messaging adapter layer (`app/integrations/`) with a config-driven channel catalogue for Telegram, Discord, Slack, Feishu, DingTalk, WeCom, WeChat OA, QQ/OneBot, LINE, Matrix and generic webhooks.
+- Admin console at `/admin` behind PIN `1314`: view (masked) API configuration and test/maintain IM webhook connectors; new endpoints `/api/admin/*`.
+- Compliant open-web collector (`app/ingest/open_web.py`): public Google News RSS + custom feeds, robots.txt checks, polite rate limiting, bounded retries — all results still pass the trusted-source whitelist.
+- Public theory page `/theory` (`app/web/theory.py`) covering methodology, credibility-band origins, a full SVG system diagram, itemised citations and academic/global assessment.
+- Permanent scrollbar on the Top 30 media panel; each evidence item now shows a bracketed tag with outlet, global credibility rank, factual grade and report date.
+
+### Changed
+- System topology diagram now depicts one generic "instant messengers (incl. Telegram)" entry point instead of a single IM.
+- `CUSTOM_FEED_URLS` and `NV_IM_*_WEBHOOK` configuration documented in `.env.example`.
 
 ## 0.5.2 — Verity (2026-11-17)
 

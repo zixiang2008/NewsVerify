@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.5.2 (Verity)** · 2026-11-17.
+**Self-hosted, auditable fact-checking workspace.** Version **0.6.0 (Prism)** · 2026-11-17.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -23,14 +23,16 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
 
-## What is new in 0.5.2
+## What is new in 0.6.0
 
-- **Strict trusted-source whitelist.** Only the Top 30 credible media, professional fact-checkers, globally recognised search engines and authoritative primary sources can enter the evidence pool.
-- Baidu Baike/Wenku, QQ, Sohu, Huxiu, Wikipedia and similar aggregator or encyclopedia sites are rejected at retrieval time.
-- Evidence items are labelled by source type; a new **Trusted Source Policy** panel and `/api/source-policy` endpoint expose the full whitelist.
-- `scripts/clean_untrusted_sources.py` removes historical non-whitelisted sources (dry-run by default).
+- **9 UI themes** (adds Ocean / Forest / Sunset / Violet / Mono) and an optional **ambient background music** player with 4 generative tracks and volume control.
+- **30-media panel** now has a permanent scrollbar; each evidence item shows a bracketed tag with the outlet, its global credibility rank, factual grade and report date.
+- **Compliant open-web collection**: public RSS / Google News RSS discovery, robots.txt respect, rate limiting and retries — still gated by the trusted-source whitelist.
+- **Admin console** at `/admin` (PIN `1314`): inspect API configuration and manage/test mainstream instant-messaging webhook connectors (Telegram, Discord, Slack, Feishu, DingTalk, WeCom, WeChat OA, QQ/OneBot, LINE, Matrix, generic).
+- Simplified topology diagram showing a single "all instant messengers" entry point.
+- New public page **[/theory](app/web/theory.py)** "Rational News-Reading Theoretical Sources": methodology, the credibility-band system and its origins, a full diagram, itemised citations and academic/global assessment.
 
-Previous release 0.5.1 added four switchable UI templates (Aurora / Paper / Slate / Terminal), top navigation, version chip, a Version & Updates dialog, unified versioning in `app/version.py`, tri-language documentation and GitHub sync.
+Previous release 0.5.2 added the strict trusted-source whitelist, `/api/source-policy` and historical cleanup tooling.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 

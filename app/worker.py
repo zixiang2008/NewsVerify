@@ -104,12 +104,24 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
                 res = await session.execute(select(Source).where(Source.url == url))
                 src = res.scalar_one_or_none()
                 if src is None:
+                    # 解析 RSS/搜索返回的发布时间；解析失败则留空（后续用 created_at 兜底）
+                    pub = None
+                    raw_pub = ei.get("published_at")
+                    if raw_pub:
+                        try:
+                            pub = datetime.fromisoformat(str(raw_pub).replace("Z", "+00:00"))
+                            if pub.tzinfo is None:
+                                pub = pub.replace(tzinfo=timezone.utc)
+                        except Exception:
+                            pub = None
                     src = Source(
                         url=url,
                         domain=ei.get("domain", ""),
                         title=ei.get("title", ""),
                         content_hash=ei.get("content_hash", ""),
                         independence_chain_id=ei.get("independence_chain_id", ""),
+                        published_at=pub,
+                        fetched_at=datetime.now(timezone.utc),
                     )
                     session.add(src)
                     await session.flush()

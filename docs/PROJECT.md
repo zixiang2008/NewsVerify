@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.5.2（Verity） · 文档更新：2026-11-17
+> 软件版本：0.6.0（Prism） · 文档更新：2026-11-17
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.5.2）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.6.0）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -116,11 +116,14 @@ NewsVerify/
 │   │   ├── handlers.py       # /check /deep /track /status 等命令
 │   │   └── keyboards.py      # 内联按钮
 │   ├── web/                  # FastAPI Web 应用
-│   │   ├── app.py            # 路由 + 单页前端（HTML/CSS/JS 内联）
-│   │   └── system_status.py  # 系统运行状况采集（API 探测 + 资源）
+│   │   ├── app.py            # 路由 + 单页前端 + 后台/理论页路由
+│   │   ├── system_status.py  # 系统运行状况采集（API 探测 + 资源）
+│   │   └── theory.py         # /theory 理论来源专题页（公开）
 │   ├── core/                 # 配置、日志、安全（API Key / SSRF / PIN）
 │   ├── db/                   # 数据模型与异步会话
 │   ├── ingest/               # 抓取与正文提取（平台适配、trafilatura）
+│   │   └── open_web.py       # 合规公开信息采集（RSS/robots/限速）
+│   ├── integrations/         # 多即时通讯接入适配层（config-driven）
 │   ├── verification/         # 核查核心：主张/搜索/证据/判定/LLM/Top媒体
 │   │   └── source_policy.py  # 可信来源白名单（允许类别 + 显式拒绝表）
 │   ├── ratings/              # 六大评级体系元数据
@@ -388,3 +391,13 @@ $DOCKER compose logs -f bot worker
 - **拒绝**：`BLOCKED_DOMAINS` 覆盖百度、QQ、搜狐、虎嗅、新浪、知乎、微博、维基百科、大英百科等聚合站/百科站/内容农场；子域名（如 `baike.baidu.com`）同样拒绝。
 - **落点**：`collect_evidence()` 在抓取前过滤，`check_top_media()` 对展示来源再过滤；事件详情按 `classify_source()` 标注 `source_type`。
 - **可审计**：`/api/source-policy` 与页面「可信来源白名单」面板公开完整名单；`scripts/clean_untrusted_sources.py` 可清理历史遗留数据（默认 dry-run，需 `--apply`）。
+
+### 13.6 v0.6.0：界面扩展、接入层与理论页
+
+- **9 套主题**：在原有 4 套基础上新增 ocean / forest / sunset / violet / mono，全部基于语义 CSS 变量，选择写入 `localStorage.nv_theme`。
+- **背景音乐**：`MUSIC_TRACKS` + Web Audio 生成式振荡器（4 首氛围曲），可播放/停止/切换/调音量，无外部音频依赖；偏好写入 localStorage。
+- **媒体面板**：`.media-list` 固定高度 + `overflow-y:auto` + 自定义滚动条；证据条目按 `media_rank / media_name / factual / reported_at` 渲染方括号标注，时间来自 Source 的 `published_at → fetched_at → created_at`。
+- **合规采集**（`app/ingest/open_web.py`）：`parse_feed` 解析 RSS/Atom，`collect_google_news()` 用公开 RSS 搜索，`robots_allowed()` 检查 robots.txt，`_polite_wait()` 按域名限速；`enhanced_collect()` 汇入 `collect_evidence()` 的候选池，但仍经 `classify_source()` 白名单过滤。配置键 `CUSTOM_FEED_URLS`。
+- **IM 接入层**（`app/integrations/`）：`BaseChannel` 抽象 + `TelegramChannel` + `GenericWebhookChannel`，`ChannelRegistry` 配置驱动注册 `CHANNEL_CATALOGUE`（含 11 种主流平台）；统一入口 `POST /api/v1/im/{key}/webhook`，每个平台用 `NV_IM_{KEY}_WEBHOOK` / `NV_IM_{KEY}_SECRET` 配置。设计参考 NoneBot/OneBot 与 Kirara AI 的适配器模式，但不引入其运行时依赖。
+- **后台管理**：独立 PIN 会话 cookie `nv_admin`（PIN `1314`），路由 `/admin`、`/api/admin/config`（密钥脱敏）、`/api/admin/channels`、`/api/admin/channels/{key}/test`。中间件对 `/theory` 与后台登录放行。
+- **理论页**：`app/web/theory.py` 的 `PAGE` 为自包含 HTML，公开访问 `/theory`，含方法论表、频段体系来源、SVG 体系图、逐条引用与学术评价。

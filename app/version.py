@@ -6,9 +6,9 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.5.2"
+VERSION = "0.6.0"
 RELEASE_DATE = "2026-11-17"
-CODENAME = "Verity"
+CODENAME = "Prism"
 
 THEMES = [
     {"key": "aurora", "name": "极光 · Aurora", "description": "深蓝玻璃质感，默认风格"},
@@ -18,6 +18,22 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.6.0",
+        "date": "2026-11-17",
+        "codename": "Prism",
+        "summary": "9 套风格 + 背景音乐、合规信息采集增强、后台管理与多 IM 接入、理论来源专题页",
+        "changes": [
+            "页面风格从 4 套扩展到 9 套：新增海洋/森林/日落/紫罗兰/素黑白",
+            "新增可开关、可切换 4 首氛围曲、可调音量的背景音乐（Web Audio 生成式，无需外部音频）",
+            "30 家媒体面板加入常驻滚动条，可完整查看全部媒体",
+            "证据标题右侧方括号标注媒体名、全球可信榜名次、事实等级与报道时间",
+            "新增合规公开信息采集增强：RSS/Google News RSS + robots 尊重 + 限速重试，仍经可信白名单",
+            "新增 /admin 后台（PIN 1314）：查看 API 配置、管理/测试主流即时通讯接入入口",
+            "系统拓扑图改为统一的即时通讯工具接入（含 Telegram 在内）",
+            "新增公开专题页 /theory「理性查看新闻理论来源」：方法论、频段体系由来、图示、逐条出处与学术评价",
+        ],
+    },
     {
         "version": "0.5.2",
         "date": "2026-11-17",

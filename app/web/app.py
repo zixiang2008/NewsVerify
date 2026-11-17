@@ -9,6 +9,8 @@ from app.core.config import get_settings
 from app.version import VERSION, RELEASE_DATE, CODENAME, version_payload
 from app.verification.top_media import TOP_MEDIA, NOTE
 from app.verification.source_policy import classify_source
+from app.integrations import registry as im_registry, CHANNEL_CATALOGUE
+from app.integrations import IMMessage, IMReply
 from fastapi import Depends, HTTPException
 
 def verify_api_key(request: Request):
@@ -28,10 +30,90 @@ app = FastAPI(title="NewsVerify", version=VERSION)
 
 PIN_CODE = "1314"
 
+# 注册 IM 接入处理器：把归一化的消息路由到核查流程（此处回执确认，实际提交
+# 通过 /submit 或 /api/v1/check；webhook 仅做入口抽象与白名单校验）。
+def _im_handler(msg: IMMessage) -> IMReply:
+    text = (msg.text or "").strip()
+    if not text:
+        return IMReply(text="请发送需要核查的新闻文本。")
+    if len(text) > 2000:
+        text = text[:2000]
+    return IMReply(text=f"[{msg.label if hasattr(msg, 'label') else msg.channel}] 已收到核查请求（{len(text)} 字）。"
+                        f"已进入 NewsVerify 队列；结果将按追踪约定推送。")
+
+im_registry.set_handler(_im_handler)
+
+ADMIN_LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>NewsVerify 后台登录</title>
+<style>
+body{font-family:-apple-system,sans-serif;background:radial-gradient(900px 500px at 50% -10%,#1b2a4a 0%,#08101f 70%);color:#e6edf7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.box{background:#111c33;border:1px solid #1e2d4d;border-radius:18px;padding:32px;width:min(360px,92vw);box-shadow:0 18px 50px rgba(0,0,0,.4)}
+h1{font-size:20px;color:#38bdf8;margin-bottom:6px}.ver{font-size:11px;color:#8b9bb5;margin-bottom:20px}
+input{width:100%;padding:12px;border-radius:10px;border:1px solid #1e2d4d;background:#08101f;color:#e6edf7;font-size:22px;letter-spacing:10px;text-align:center}
+button{width:100%;margin-top:12px;padding:11px;border:none;border-radius:10px;background:linear-gradient(90deg,#38bdf8,#818cf8);color:#08101f;font-weight:700;cursor:pointer}
+.err{color:#f87171;font-size:12px;margin-top:8px;display:none}
+</style></head><body><div class="box">
+<h1>NewsVerify 后台管理</h1><div class="ver">请输入 4 位 PIN 码进入设置</div>
+<input id="pin" type="password" inputmode="numeric" maxlength="4" placeholder="••••" autofocus />
+<button onclick="login()">进入后台</button><div class="err" id="err">PIN 码错误</div>
+</div><script>
+async function login(){const pin=document.getElementById('pin').value;const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pin='+encodeURIComponent(pin)});if(r.ok){location.href='/admin';}else{document.getElementById('err').style.display='block';}}
+document.getElementById('pin').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
+</script></body></html>"""
+
+ADMIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>NewsVerify 后台管理</title>
+<style>
+:root{color-scheme:dark;--bg:#08101f;--card:#111c33;--card2:#162240;--border:#1e2d4d;--text:#e6edf7;--muted:#8b9bb5;--accent:#38bdf8;--accent2:#818cf8;--ok:#22c55e;--bad:#f87171}
+body{font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:24px}
+.wrap{max-width:1080px;margin:0 auto}h1{font-size:22px;color:var(--accent)}.sub{color:var(--muted);font-size:12px;margin:4px 0 20px}
+.card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px}
+.card h2{font-size:15px;color:var(--accent2);margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:12px}td{padding:8px;border-bottom:1px solid var(--border)}td.k{color:var(--muted);width:34%}
+code{color:var(--accent);word-break:break-all}.badge{font-size:10px;padding:2px 8px;border-radius:999px;background:#123;color:var(--accent)}
+.on{color:var(--ok)}.off{color:var(--bad)}
+.btn{padding:7px 12px;border:none;border-radius:8px;background:var(--accent);color:#08101f;font-weight:700;cursor:pointer;font-size:12px}
+a{color:var(--accent);text-decoration:none}
+</style></head><body><div class="wrap">
+<h1>⚙️ NewsVerify 后台管理</h1><div class="sub">查看 API 配置、管理即时通讯接入入口 · 版本 __APP_VERSION__ · <a href="/">← 返回控制台</a></div>
+<div class="card"><h2>🔑 调用的 API 与可设置信息</h2><table id="cfgTable"><tr><td>加载中…</td></tr></table>
+<p class="sub" id="envNotice"></p></div>
+<div class="card"><h2>💬 即时通讯接入入口（主流平台）</h2>
+<p class="sub">统一 Webhook 入口：<code>/api/v1/im/{平台key}/webhook</code>。配置方式见下方各平台文档；状态为「已配置」即可接收。</p>
+<table id="chTable"><tr><td>加载中…</td></tr></table></div>
+<div class="card"><h2>📡 Webhook 接入测试</h2><p class="sub">向指定平台通道发送一条测试回执。</p>
+<select id="testCh" style="background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px;border-radius:8px"></select>
+<input id="testChat" placeholder="chat_id" value="test" style="background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px;border-radius:8px;margin-left:6px"/>
+<button class="btn" style="margin-left:6px" onclick="testChannel()">发送测试</button>
+<div id="testResult" class="sub"></div></div>
+<script>
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function loadCfg(){const d=await(await fetch('/api/admin/config')).json();
+const rows=[['LLM 主地址',d.llm_base_url],['LLM 备用地址',d.llm_base_url_fallback],['核查模型',d.llm_model],['判定模型',d.llm_judge_model],['LLM API Key',d.llm_api_key_masked],['搜索提供方',d.search_provider],['SearXNG 地址',d.searxng_base_url],['Brave Key',d.brave_key_masked],['Google FactCheck Key',d.google_factcheck_key_masked],['Public API Key',d.api_key_masked],['Telegram Bot',d.telegram_bot_configured?'已配置':'未配置'],['允许的用户 ID',d.telegram_allowed_user_ids],['自定义 RSS 源',d.custom_feed_urls],['版本',d.version]];
+document.getElementById('cfgTable').innerHTML=rows.map(r=>`<tr><td class="k">${esc(r[0])}</td><td><code>${esc(r[1])||'—'}</code></td></tr>`).join('');
+document.getElementById('envNotice').textContent=d.env_notice;}
+async function loadChannels(){const d=await(await fetch('/api/admin/channels')).json();
+document.getElementById('chTable').innerHTML='<tr><td class="k"><b>平台</b></td><td><b>状态</b></td><td><b>文档 / 入口</b></td></tr>'+d.channels.map(c=>`<tr><td class="k">${esc(c.label)}</td><td class="${c.configured?'on':'off'}">${c.configured?'● 已配置':'○ 待配置'}</td><td><a href="${esc(c.docs)}" target="_blank">${esc(c.docs)}</a><br><code>/api/v1/im/${esc(c.key)}/webhook</code></td></tr>`).join('');
+document.getElementById('testCh').innerHTML=d.channels.map(c=>`<option value="${esc(c.key)}">${esc(c.label)}</option>`).join('');}
+async function testChannel(){const key=document.getElementById('testCh').value,chat=document.getElementById('testChat').value;
+const r=await fetch('/api/admin/channels/'+key+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chat,text:'NewsVerify 后台测试消息'})});const d=await r.json();
+document.getElementById('testResult').textContent=d.ok?'✅ 发送成功':'⚠️ 未配置或发送失败（'+JSON.stringify(d)+'）';}
+loadCfg();loadChannels();
+</script></div></body></html>""".replace("__APP_VERSION__", VERSION)
+
 @app.middleware("http")
 async def pin_auth(request: Request, call_next):
     path = request.url.path
     if path in ("/login", "/health") or path.startswith("/static") or path.startswith("/api/v1"):
+        return await call_next(request)
+    # 理论来源页公开可访问；后台管理走独立 PIN 会话
+    if path.startswith("/theory") or path in ("/admin/login", "/api/admin/login"):
+        return await call_next(request)
+    if path.startswith("/admin") or path.startswith("/api/admin"):
+        if request.cookies.get("nv_admin") != PIN_CODE:
+            if path.startswith("/api/"):
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+            return RedirectResponse(url="/admin/login", status_code=302)
         return await call_next(request)
     cookie = request.cookies.get("nv_auth")
     if cookie != PIN_CODE:
@@ -77,6 +159,13 @@ async def login_submit(pin: str = Form(...)):
     return RedirectResponse(url="/login?err=1", status_code=302)
 
 
+@app.get("/theory", response_class=HTMLResponse)
+async def theory_page():
+    """公开的理论来源专题页。"""
+    from app.web.theory import PAGE as THEORY_PAGE
+    return HTMLResponse(THEORY_PAGE)
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -93,6 +182,91 @@ async def api_system():
     """系统运行状况：资源消耗 + 外部 API 在线探测。"""
     from app.web.system_status import get_system_status
     return await get_system_status()
+
+
+# ---------- 后台管理（独立 PIN 会话） ----------
+@app.get("/api/admin/login")
+async def admin_login_page():
+    return HTMLResponse(ADMIN_LOGIN_HTML)
+
+
+@app.post("/api/admin/login")
+async def admin_login_submit(pin: str = Form(...)):
+    if pin == PIN_CODE:
+        resp = JSONResponse({"ok": True})
+        resp.set_cookie("nv_admin", PIN_CODE, httponly=True, max_age=86400, samesite="lax")
+        return resp
+    return JSONResponse({"error": "invalid pin"}, status_code=401)
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+async def admin_login_view():
+    return HTMLResponse(ADMIN_LOGIN_HTML)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_console():
+    return HTMLResponse(ADMIN_HTML)
+
+
+@app.get("/api/admin/config")
+async def admin_get_config():
+    """查看后台可设置信息（密钥脱敏）。"""
+    s = get_settings()
+    def mask(v):
+        v = v or ""
+        return (v[:6] + "••••" + v[-4:]) if len(v) > 10 else ("••••" if v else "")
+    return {
+        "llm_base_url": s.llm_base_url,
+        "llm_base_url_fallback": s.llm_base_url_fallback,
+        "llm_model": s.llm_model,
+        "llm_judge_model": s.llm_judge_model,
+        "llm_api_key_masked": mask(s.llm_api_key),
+        "search_provider": s.search_provider,
+        "searxng_base_url": s.searxng_base_url,
+        "brave_key_masked": mask(s.brave_search_api_key),
+        "google_factcheck_key_masked": mask(s.google_factcheck_api_key),
+        "api_key_masked": mask(s.api_key),
+        "telegram_bot_configured": bool(s.telegram_bot_token),
+        "telegram_allowed_user_ids": s.telegram_allowed_user_ids,
+        "custom_feed_urls": getattr(s, "custom_feed_urls", ""),
+        "channels": im_registry.catalogue(),
+        "version": VERSION,
+        "env_notice": "修改 .env 后需重启容器生效；Webhook 接入可用下方测试入口验证。",
+    }
+
+
+@app.get("/api/admin/channels")
+async def admin_channels():
+    return {"channels": im_registry.catalogue()}
+
+
+@app.post("/api/admin/channels/{key}/test")
+async def admin_channel_test(key: str, request: Request):
+    """Send a test reply through a configured webhook channel."""
+    ch = im_registry.get(key)
+    if not ch:
+        return JSONResponse({"error": "unknown channel"}, status_code=404)
+    body = await request.json()
+    ok = await ch.send_message(str(body.get("chat_id", "test")), IMReply(text=str(body.get("text", "NewsVerify 测试消息"))))
+    return {"ok": ok, "configured": ch.configured}
+
+
+@app.post("/api/v1/im/{key}/webhook")
+async def im_webhook(key: str, request: Request):
+    """Unified inbound webhook for all instant-messaging platforms (key-authenticated)."""
+    # API key is not required for inbound platform webhooks; platforms sign their
+    # payloads. For generic channels the caller includes api_key query/header.
+    from app.core.config import get_settings as _gs
+    expected = _gs().api_key
+    supplied = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    if expected and supplied != expected:
+        raise HTTPException(status_code=401, detail="invalid api key")
+    payload = await request.json()
+    signature = request.headers.get("X-Signature", "")
+    reply = await im_registry.dispatch(key, payload, signature)
+    return {"ok": True, "reply": reply}
+
 
 
 @app.get("/api/status")
@@ -194,7 +368,23 @@ async def api_event_detail(event_id: str):
                 src = await session.get(Source, evi.source_id)
                 src_url = src.url if src else ""
                 stype, _ = classify_source(src_url)
-                ev_list.append({"snippet": evi.snippet, "stance": evi.stance, "url": src_url, "domain": src.domain if src else "", "title": src.title if src else "", "source_type": stype or "untrusted"})
+                # 反查该来源属于 Top30 的哪家、名次、事实等级；并取报道/抓取时间
+                rank = None; media_name = None; factual = None
+                dom = (src.domain if src else "") or ""
+                for m in TOP_MEDIA:
+                    md = m["domain"]
+                    if dom == md or dom.endswith("." + md) or md in src_url:
+                        rank = m["rank"]; media_name = m["name"]; factual = m.get("factual")
+                        break
+                reported_at = None
+                if src:
+                    reported_at = (getattr(src, "published_at", None) or getattr(src, "fetched_at", None) or getattr(src, "created_at", None))
+                    reported_at = reported_at.isoformat() if reported_at else None
+                ev_list.append({"snippet": evi.snippet, "stance": evi.stance, "url": src_url,
+                                "domain": dom, "title": src.title if src else "",
+                                "source_type": stype or "untrusted",
+                                "media_rank": rank, "media_name": media_name, "factual": factual,
+                                "reported_at": reported_at})
             v = next((x for x in verdicts if x.claim_id == c.id), None)
             claim_details.append({
                 "id": c.id, "text": c.text, "language": c.language,
@@ -476,7 +666,23 @@ async def api_v1_event_detail(event_id: str, ok: bool = Depends(verify_api_key))
                 src = await session.get(Source, evi.source_id)
                 src_url = src.url if src else ""
                 stype, _ = classify_source(src_url)
-                ev_list.append({"snippet": evi.snippet, "stance": evi.stance, "url": src_url, "domain": src.domain if src else "", "title": src.title if src else "", "source_type": stype or "untrusted"})
+                # 反查该来源属于 Top30 的哪家、名次、事实等级；并取报道/抓取时间
+                rank = None; media_name = None; factual = None
+                dom = (src.domain if src else "") or ""
+                for m in TOP_MEDIA:
+                    md = m["domain"]
+                    if dom == md or dom.endswith("." + md) or md in src_url:
+                        rank = m["rank"]; media_name = m["name"]; factual = m.get("factual")
+                        break
+                reported_at = None
+                if src:
+                    reported_at = (getattr(src, "published_at", None) or getattr(src, "fetched_at", None) or getattr(src, "created_at", None))
+                    reported_at = reported_at.isoformat() if reported_at else None
+                ev_list.append({"snippet": evi.snippet, "stance": evi.stance, "url": src_url,
+                                "domain": dom, "title": src.title if src else "",
+                                "source_type": stype or "untrusted",
+                                "media_rank": rank, "media_name": media_name, "factual": factual,
+                                "reported_at": reported_at})
             v = next((x for x in verdicts if x.claim_id == c.id), None)
             claim_details.append({
                 "id": c.id, "text": c.text, "language": c.language,
@@ -618,6 +824,68 @@ html[data-theme="terminal"]{
  --shadow:0 16px 42px rgba(0,0,0,.55);--radius:10px;--radius-sm:6px;
 }
 html[data-theme="terminal"] body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+/* ==== v0.6.0 新增 5 套风格：ocean / forest / sunset / violet / mono ==== */
+html[data-theme="ocean"]{
+ color-scheme:dark;
+ --bg:rgb(4 20 32);--bg2:rgb(6 30 46);--card:rgb(8 40 58);--card2:rgb(10 48 68);
+ --surface-0:rgb(6 32 48);--surface-1:rgb(8 40 58);--surface-2:rgb(7 36 53);--surface-3:rgb(12 54 76);
+ --text:rgb(224 246 252);--muted:rgb(128 178 196);--border:rgb(22 78 102);
+ --accent:rgb(34 211 238);--accent2:rgb(56 189 248);--accent3:rgb(45 212 191);
+ --accent-soft:rgb(103 232 249);--accent2-soft:rgb(125 211 252);
+ --ok:rgb(45 212 191);--warn:rgb(251 146 60);--bad:rgb(244 114 182);
+ --ok-text:rgb(94 234 212);--warn-text:rgb(253 186 116);--bad-text:rgb(249 168 212);
+ --on-accent:rgb(4 20 32);--hero-a:rgb(8 65 92);--hero-b:rgb(15 45 80);--reported-bg:rgb(8 52 52);
+ --shadow:0 16px 42px rgba(0,20,32,.5);
+}
+html[data-theme="forest"]{
+ color-scheme:dark;
+ --bg:rgb(10 22 16);--bg2:rgb(14 32 22);--card:rgb(18 42 29);--card2:rgb(22 50 34);
+ --surface-0:rgb(14 34 23);--surface-1:rgb(18 42 29);--surface-2:rgb(16 38 26);--surface-3:rgb(26 58 39);
+ --text:rgb(232 246 235);--muted:rgb(150 182 158);--border:rgb(44 84 57);
+ --accent:rgb(132 204 22);--accent2:rgb(163 230 53);--accent3:rgb(52 211 153);
+ --accent-soft:rgb(190 242 100);--accent2-soft:rgb(217 249 157);
+ --ok:rgb(74 222 128);--warn:rgb(234 179 8);--bad:rgb(248 113 113);
+ --ok-text:rgb(134 239 172);--warn-text:rgb(253 224 71);--bad-text:rgb(252 165 165);
+ --on-accent:rgb(10 22 16);--hero-a:rgb(20 68 38);--hero-b:rgb(30 58 26);--reported-bg:rgb(20 52 34);
+ --shadow:0 16px 42px rgba(6,20,12,.5);
+}
+html[data-theme="sunset"]{
+ color-scheme:dark;
+ --bg:rgb(30 16 26);--bg2:rgb(44 22 32);--card:rgb(58 30 40);--card2:rgb(70 36 46);
+ --surface-0:rgb(44 24 33);--surface-1:rgb(58 30 40);--surface-2:rgb(50 27 37);--surface-3:rgb(84 44 54);
+ --text:rgb(255 238 236);--muted:rgb(196 152 158);--border:rgb(110 58 70);
+ --accent:rgb(251 146 60);--accent2:rgb(244 114 182);--accent3:rgb(250 204 21);
+ --accent-soft:rgb(253 186 116);--accent2-soft:rgb(249 168 212);
+ --ok:rgb(74 222 128);--warn:rgb(250 204 21);--bad:rgb(248 113 113);
+ --ok-text:rgb(134 239 172);--warn-text:rgb(253 224 71);--bad-text:rgb(252 165 165);
+ --on-accent:rgb(30 16 26);--hero-a:rgb(120 40 50);--hero-b:rgb(90 30 70);--reported-bg:rgb(60 30 35);
+ --shadow:0 16px 42px rgba(30,10,20,.5);
+}
+html[data-theme="violet"]{
+ color-scheme:dark;
+ --bg:rgb(16 12 32);--bg2:rgb(24 18 48);--card:rgb(34 26 64);--card2:rgb(42 32 76);
+ --surface-0:rgb(24 18 46);--surface-1:rgb(34 26 64);--surface-2:rgb(29 22 55);--surface-3:rgb(52 40 92);
+ --text:rgb(240 236 255);--muted:rgb(160 150 200);--border:rgb(70 56 120);
+ --accent:rgb(192 132 252);--accent2:rgb(129 140 248);--accent3:rgb(232 121 249);
+ --accent-soft:rgb(216 180 254);--accent2-soft:rgb(165 180 252);
+ --ok:rgb(74 222 128);--warn:rgb(251 191 36);--bad:rgb(248 113 113);
+ --ok-text:rgb(134 239 172);--warn-text:rgb(253 224 71);--bad-text:rgb(252 165 165);
+ --on-accent:rgb(16 12 32);--hero-a:rgb(76 29 149);--hero-b:rgb(49 46 129);--reported-bg:rgb(40 30 70);
+ --shadow:0 16px 42px rgba(16,8,32,.55);
+}
+html[data-theme="mono"]{
+ color-scheme:light;
+ --bg:rgb(250 250 248);--bg2:rgb(240 240 236);--card:rgb(255 255 253);--card2:rgb(246 246 242);
+ --surface-0:rgb(248 248 244);--surface-1:rgb(255 255 253);--surface-2:rgb(238 238 233);--surface-3:rgb(228 228 222);
+ --text:rgb(28 28 26);--muted:rgb(108 108 102);--border:rgb(204 204 196);
+ --accent:rgb(55 65 81);--accent2:rgb(87 83 78);--accent3:rgb(71 85 105);
+ --accent-soft:rgb(55 65 81);--accent2-soft:rgb(87 83 78);
+ --ok:rgb(22 101 52);--warn:rgb(154 88 5);--bad:rgb(190 18 60);
+ --ok-text:rgb(22 101 52);--warn-text:rgb(154 88 5);--bad-text:rgb(190 18 60);
+ --on-accent:rgb(255 255 253);--hero-a:rgb(232 232 226);--hero-b:rgb(240 238 230);--reported-bg:rgb(232 244 236);
+ --shadow:0 12px 34px rgba(20,20,18,.10);
+}
+html[data-theme="mono"] body{font-family:Georgia,"Times New Roman",serif}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(1200px 600px at 10% -10%,var(--hero-a) 0%,transparent 60%),radial-gradient(1000px 500px at 90% 0%,var(--hero-b) 0%,transparent 60%),var(--bg);color:var(--text);min-height:100vh}
 .wrap{max-width:1440px;margin:0 auto;padding:24px}
@@ -637,6 +905,21 @@ h1{font-size:24px;font-weight:700}
 .version-btn{display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;border:1px solid var(--border);background:var(--surface-1);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;transition:all .15s}
 .version-btn:hover{border-color:var(--accent);color:var(--accent)}
 .v-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 9px var(--ok)}
+/* 背景音乐控件 */
+.music-btn{display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-1);color:var(--text);font-size:12px;cursor:pointer;transition:all .15s}
+.music-btn:hover{border-color:var(--accent);color:var(--accent)}
+.music-btn.playing{border-color:var(--accent3);color:var(--ok-text)}
+.music-note{font-size:13px}
+.music-panel{position:fixed;right:20px;bottom:20px;z-index:55;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:var(--shadow);width:min(320px,92vw);display:none}
+.music-panel h3{font-size:14px;color:var(--accent);margin-bottom:4px}
+.music-track{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;border-radius:10px;border:1px solid var(--border);background:var(--surface-0);margin-top:7px;cursor:pointer;font-size:12px;transition:all .15s}
+.music-track:hover{border-color:var(--accent)}
+.music-track.active{border-color:var(--accent3);background:var(--reported-bg)}
+.music-track .mt-title{font-weight:700;color:var(--text)}
+.music-track .mt-desc{font-size:10px;color:var(--muted);margin-top:2px}
+.music-track .mt-icon{font-size:16px}
+.music-row{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:11px;color:var(--muted)}
+.music-row input[type=range]{flex:1;accent-color:var(--accent)}
 .nav{display:flex;gap:6px;flex-wrap:wrap;margin:-6px 0 18px;padding:6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-1);box-shadow:var(--shadow)}
 .nav a{color:var(--muted);text-decoration:none;font-size:12px;padding:6px 12px;border-radius:8px;transition:all .15s}
 .nav a:hover{background:var(--surface-2);color:var(--accent)}
@@ -675,8 +958,14 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .btn.small{padding:6px 12px;font-size:12px}
 .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 
-/* top media */
-.media-list{display:flex;flex-direction:column;gap:8px;max-height:620px;overflow:auto}
+/* top media：固定高度 + 常驻滚动条，一屏内可滚动查看全部 30 家 */
+.media-list{display:flex;flex-direction:column;gap:8px;height:560px;overflow-y:auto;overflow-x:hidden;padding-right:8px;scrollbar-width:thin;scrollbar-color:var(--accent) var(--surface-2)}
+.media-list::-webkit-scrollbar{width:8px}
+.media-list::-webkit-scrollbar-track{background:var(--surface-2);border-radius:8px}
+.media-list::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--accent),var(--accent2));border-radius:8px}
+.media-list::-webkit-scrollbar-thumb:hover{background:var(--accent-soft)}
+.media-scroll-hint{font-size:10px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:5px}
+.media-scroll-hint .sc-line{display:inline-block;width:26px;height:4px;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
 .media-item{background:var(--surface-0);border:1px solid var(--border);border-radius:12px;padding:12px;transition:border-color .15s}
 .media-item:hover{border-color:var(--accent)}
 .media-item .head{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -751,6 +1040,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .modal .ev{background:var(--surface-0);border:1px solid var(--border);border-radius:10px;padding:10px;margin:6px 0;font-size:12px}
 .modal .ev a{color:var(--accent);text-decoration:none}
 .modal .ev a:hover{text-decoration:underline}
+/* 证据来源标注：方括号内的媒体名 / 可信排名 / 报道时间 */
+.ev-src-tag{display:inline-block;font-size:10px;color:var(--accent2-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:1px 7px;margin-left:6px;vertical-align:middle;font-variant-numeric:tabular-nums}
+.ev-src-tag .rk{color:var(--ok-text);font-weight:700}
+.ev-src-tag .tm{color:var(--muted)}
 .modal .media-row{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
 @media(max-width:600px){.modal .media-row{grid-template-columns:1fr}}
 .modal .media-cell{background:var(--surface-0);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:12px}
@@ -843,9 +1136,16 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <option value="paper">纸张 · Paper</option>
         <option value="slate">石墨 · Slate</option>
         <option value="terminal">终端 · Terminal</option>
+        <option value="ocean">海洋 · Ocean</option>
+        <option value="forest">森林 · Forest</option>
+        <option value="sunset">日落 · Sunset</option>
+        <option value="violet">紫罗兰 · Violet</option>
+        <option value="mono">素黑白 · Mono</option>
       </select>
     </label>
+    <button class="music-btn" id="musicBtn" onclick="toggleMusicPanel()" title="背景音乐"><span class="music-note">🎵</span><span id="musicLabel">音乐</span></button>
     <button class="version-btn" onclick="showVersion()" title="查看版本与更新记录"><span class="v-dot"></span>v__APP_VERSION__ · 更新</button>
+    <button class="version-btn" onclick="location.href='/admin'" title="后台管理"><span>⚙️</span>后台</button>
   </div>
 </header>
 <div class="nav">
@@ -854,6 +1154,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
   <a href="#media">媒体观察</a>
   <a href="#system">系统运行</a>
   <a href="#method">方法论</a>
+  <a href="/theory">📚 理性查看新闻理论来源</a>
   <a href="https://github.com/zixiang2008/NewsVerify" target="_blank">GitHub / 三语文档</a>
 </div>
 <span class="section-anchor" id="overview"></span>
@@ -950,18 +1251,19 @@ textarea:focus{outline:none;border-color:var(--accent)}
             <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent2)"/></linearGradient>
             <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--accent)"/></marker>
           </defs>
-          <!-- Telegram -->
-          <rect x="20" y="90" width="110" height="50" rx="10" fill="var(--surface-2)" stroke="var(--accent)"/>
-          <text x="75" y="112" text-anchor="middle" fill="var(--text)" font-size="12" font-weight="700">Telegram</text>
-          <text x="75" y="128" text-anchor="middle" fill="var(--muted)" font-size="10">用户消息</text>
+          <!-- IM entry (all instant messaging platforms) -->
+          <rect x="20" y="90" width="150" height="70" rx="10" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="95" y="114" text-anchor="middle" fill="var(--text)" font-size="12" font-weight="700">即时通讯工具</text>
+          <text x="95" y="132" text-anchor="middle" fill="var(--muted)" font-size="10">Telegram / Discord / Slack</text>
+          <text x="95" y="148" text-anchor="middle" fill="var(--muted)" font-size="10">微信 / 飞书 / 钉钉 等</text>
           <!-- Web -->
-          <rect x="20" y="170" width="110" height="50" rx="10" fill="var(--surface-2)" stroke="var(--accent2)"/>
-          <text x="75" y="192" text-anchor="middle" fill="var(--text)" font-size="12" font-weight="700">Web UI</text>
-          <text x="75" y="208" text-anchor="middle" fill="var(--muted)" font-size="10">new.caishen.today</text>
+          <rect x="20" y="180" width="150" height="50" rx="10" fill="var(--surface-2)" stroke="var(--accent2)"/>
+          <text x="95" y="202" text-anchor="middle" fill="var(--text)" font-size="12" font-weight="700">Web UI</text>
+          <text x="95" y="218" text-anchor="middle" fill="var(--muted)" font-size="10">new.caishen.today</text>
           <!-- Bot -->
-          <rect x="180" y="120" width="130" height="60" rx="12" fill="url(#g1)" opacity=".9"/>
-          <text x="245" y="145" text-anchor="middle" fill="var(--surface-0)" font-size="13" font-weight="800">Bot 服务</text>
-          <text x="245" y="162" text-anchor="middle" fill="var(--surface-0)" font-size="10">aiogram · 白名单</text>
+          <rect x="200" y="120" width="140" height="60" rx="12" fill="url(#g1)" opacity=".9"/>
+          <text x="270" y="145" text-anchor="middle" fill="var(--surface-0)" font-size="12" font-weight="800">IM 接入适配层</text>
+          <text x="270" y="162" text-anchor="middle" fill="var(--surface-0)" font-size="10">多渠道统一入口 · 白名单</text>
           <!-- Worker -->
           <rect x="360" y="60" width="150" height="140" rx="12" fill="var(--surface-2)" stroke="var(--accent3)" stroke-width="1.5"/>
           <text x="435" y="82" text-anchor="middle" fill="var(--accent3)" font-size="13" font-weight="800">Worker</text>
@@ -989,9 +1291,9 @@ textarea:focus{outline:none;border-color:var(--accent)}
           <text x="795" y="222" text-anchor="middle" fill="var(--text)" font-size="12" font-weight="700">Top 30 媒体</text>
           <text x="795" y="238" text-anchor="middle" fill="var(--muted)" font-size="10"> Reuters … WSJ</text>
           <!-- arrows -->
-          <line x1="130" y1="115" x2="180" y2="140" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)"/>
-          <line x1="130" y1="195" x2="180" y2="160" stroke="var(--accent2)" stroke-width="1.5" marker-end="url(#arrow)"/>
-          <line x1="310" y1="150" x2="360" y2="130" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="170" y1="125" x2="200" y2="145" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="170" y1="205" x2="200" y2="160" stroke="var(--accent2)" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="340" y1="150" x2="360" y2="130" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)"/>
           <line x1="510" y1="130" x2="560" y2="130" stroke="var(--accent3)" stroke-width="1.5" marker-end="url(#arrow)"/>
           <line x1="680" y1="110" x2="730" y2="85" stroke="var(--warn)" stroke-width="1.2" marker-end="url(#arrow)"/>
           <line x1="680" y1="130" x2="730" y2="155" stroke="var(--warn)" stroke-width="1.2" marker-end="url(#arrow)"/>
@@ -1036,6 +1338,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <h2><span class="icon">🌐</span>全球公信力 Top 30 媒体</h2>
     <p class="note">综合 MBFC 事实报道分级、Reuters Institute 信任度研究整理，按“事实准确性 + 编辑独立性”排序，非官方名次。每条新闻核查时会在全部 30 家上交叉验证：<b>🟢 点亮</b>=有报道，<b>⚪ 灰色</b>=未见报道。</p>
     <div class="media-cover" id="mediaSummary">尚未核查任何新闻</div>
+    <div class="media-scroll-hint"><span class="sc-line"></span>列表可滚动，查看全部 30 家</div>
     <div class="media-list" id="mediaList"></div>
     <p class="note" id="mediaNote"></p>
   </div>
@@ -1053,6 +1356,17 @@ textarea:focus{outline:none;border-color:var(--accent)}
   </div>
 </footer>
 
+<!-- 背景音乐面板 -->
+<div class="music-panel" id="musicPanel">
+  <h3>🎵 背景音乐 <span class="note" style="float:right;margin:0">安静 · 放松</span></h3>
+  <div class="note" style="margin:2px 0 8px">生成式氛围音，无需联网加载音频，可随时开启或切换。</div>
+  <div id="musicTracks"></div>
+  <div class="music-row">
+    <button class="mini-btn" onclick="toggleMusic()" id="musicToggleBtn">▶ 播放</button>
+    <span>音量</span><input type="range" min="0" max="100" value="50" onchange="setMusicVolume(this.value)" />
+  </div>
+</div>
+
 <!-- Modal -->
 <div class="modal-bg" id="modalBg" onclick="closeModal(event)">
   <div class="modal" onclick="event.stopPropagation()">
@@ -1069,6 +1383,11 @@ const THEMES=[
   {key:'paper',name:'纸张 · Paper',desc:'浅色阅读友好风格',colors:['#f5f7fb','#2563eb','#0d9488']},
   {key:'slate',name:'石墨 · Slate',desc:'中性专业的控制台风格',colors:['#0f172a','#60a5fa','#2dd4bf']},
   {key:'terminal',name:'终端 · Terminal',desc:'高对比等宽终端风格',colors:['#050e09','#4ade80','#a3e635']},
+  {key:'ocean',name:'海洋 · Ocean',desc:'深海青蓝，沉静通透',colors:['#041420','#22d3ee','#2dd4bf']},
+  {key:'forest',name:'森林 · Forest',desc:'自然墨绿，护眼舒缓',colors:['#0a1610','#84cc16','#34d399']},
+  {key:'sunset',name:'日落 · Sunset',desc:'暖橙玫红，温暖柔和',colors:['#1e101a','#fb923c','#f472b6']},
+  {key:'violet',name:'紫罗兰 · Violet',desc:'深紫优雅，专注沉浸',colors:['#100c20','#c084fc','#e879f9']},
+  {key:'mono',name:'素黑白 · Mono',desc:'黑白衬线，纸质阅读',colors:['#fafaf8','#374151','#475569']},
 ];
 function applyTheme(key){
   const found=THEMES.find(t=>t.key===key)||THEMES[0];
@@ -1082,6 +1401,80 @@ function applyTheme(key){
   try{saved=localStorage.getItem('nv_theme')||'aurora';}catch(e){}
   document.documentElement.setAttribute('data-theme',saved);
   setTimeout(()=>{const sel=document.getElementById('themeSelect'); if(sel) sel.value=saved;},0);
+})();
+/* ==== v0.6.0 背景音乐：Web Audio 生成式氛围音，可开关/可切换曲目 ==== */
+const MUSIC_TRACKS=[
+  {id:'rain',title:'细雨 · Gentle Rain',desc:'轻柔音景，专注放松',icon:'🌧️',freq:[420,620,880],gain:0.028,wave:'sine'},
+  {id:'waves',title:'海浪 · Ocean Waves',desc:'缓慢起伏，平稳呼吸',icon:'🌊',freq:[110,165,220],gain:0.045,wave:'sine'},
+  {id:'forest',title:'森林 · Forest Calm',desc:'空灵和声，宁静自然',icon:'🌲',freq:[261,329,392],gain:0.026,wave:'triangle'},
+  {id:'night',title:'夜曲 · Night Breeze',desc:'低频暖垫，助眠静心',icon:'🌙',freq:[196,246,294],gain:0.03,wave:'sine'},
+];
+let nvAudioCtx=null,nvMusicNodes=[],nvMusicTimer=null,nvMusicOn=false,nvCurrentTrack='rain',nvMusicVol=0.5;
+function toggleMusicPanel(){
+  const p=document.getElementById('musicPanel');
+  p.style.display=(p.style.display==='block')?'none':'block';
+  if(p.style.display==='block') renderMusicTracks();
+}
+function renderMusicTracks(){
+  const box=document.getElementById('musicTracks'); if(!box) return;
+  box.innerHTML=MUSIC_TRACKS.map(t=>
+    `<div class="music-track ${t.id===nvCurrentTrack?'active':''}" onclick="selectMusic('${t.id}')">
+       <div><div class="mt-title">${t.icon} ${t.title}</div><div class="mt-desc">${t.desc}</div></div>
+       <span class="mt-icon">${t.id===nvCurrentTrack&&nvMusicOn?'🔊':'▶'}</span>
+     </div>`).join('');
+}
+function selectMusic(id){
+  nvCurrentTrack=id;
+  try{localStorage.setItem('nv_music_track',id);}catch(e){}
+  if(nvMusicOn) startMusic(); else renderMusicTracks();
+}
+function setMusicVolume(v){
+  nvMusicVol=Number(v)/100;
+  if(nvAudioCtx&&nvAudioCtx._master) nvAudioCtx._master.gain.value=nvMusicVol;
+  try{localStorage.setItem('nv_music_vol',String(v));}catch(e){}
+}
+function stopMusic(){
+  if(nvMusicTimer){clearInterval(nvMusicTimer);nvMusicTimer=null;}
+  nvMusicNodes.forEach(n=>{try{n.osc.stop();}catch(e){}try{n.osc.disconnect();}catch(e){}});
+  nvMusicNodes=[]; nvMusicOn=false;
+  const btn=document.getElementById('musicBtn'); if(btn) btn.classList.remove('playing');
+  const lbl=document.getElementById('musicLabel'); if(lbl) lbl.textContent='音乐';
+  const tb=document.getElementById('musicToggleBtn'); if(tb) tb.textContent='▶ 播放';
+  renderMusicTracks();
+}
+function startMusic(){
+  try{
+    if(!nvAudioCtx){
+      nvAudioCtx=new (window.AudioContext||window.webkitAudioContext)();
+      const master=nvAudioCtx.createGain(); master.gain.value=nvMusicVol; master.connect(nvAudioCtx.destination);
+      nvAudioCtx._master=master;
+    }
+    if(nvAudioCtx.state==='suspended') nvAudioCtx.resume();
+    nvMusicNodes.forEach(n=>{try{n.osc.stop();}catch(e){}}); nvMusicNodes=[];
+    const t=MUSIC_TRACKS.find(x=>x.id===nvCurrentTrack)||MUSIC_TRACKS[0];
+    t.freq.forEach((f,i)=>{
+      const osc=nvAudioCtx.createOscillator(); osc.type=t.wave; osc.frequency.value=f;
+      const g=nvAudioCtx.createGain(); g.gain.value=0; osc.connect(g); g.connect(nvAudioCtx._master);
+      osc.start();
+      const phase=Math.random()*Math.PI*2;
+      const tick=()=>{const now=nvAudioCtx.currentTime;const env=(0.5+0.5*Math.sin(now*(0.12+i*0.025)+phase));g.gain.setTargetAtTime(t.gain*env,now,0.9);};
+      tick(); nvMusicNodes.push({osc,g});
+    });
+    if(nvMusicTimer) clearInterval(nvMusicTimer);
+    nvMusicTimer=setInterval(()=>{const now=nvAudioCtx.currentTime;nvMusicNodes.forEach((n,i)=>{const env=(0.5+0.5*Math.sin(now*(0.12+i*0.025)+i));n.g.gain.setTargetAtTime(t.gain*env,now,0.9);});},1500);
+    nvMusicOn=true;
+    const btn=document.getElementById('musicBtn'); if(btn) btn.classList.add('playing');
+    const lbl=document.getElementById('musicLabel'); if(lbl) lbl.textContent='播放中';
+    const tb=document.getElementById('musicToggleBtn'); if(tb) tb.textContent='⏸ 停止';
+    renderMusicTracks();
+  }catch(e){ console.warn('music start failed',e); }
+}
+function toggleMusic(){ if(nvMusicOn){stopMusic();}else{startMusic();} }
+(function initMusic(){
+  try{
+    const t=localStorage.getItem('nv_music_track'); if(t&&MUSIC_TRACKS.some(x=>x.id===t)) nvCurrentTrack=t;
+    const v=localStorage.getItem('nv_music_vol'); if(v!=null) nvMusicVol=Number(v)/100;
+  }catch(e){}
 })();
 async function showVersion(){
   const modalBg=document.getElementById('modalBg');
@@ -1350,7 +1743,15 @@ async function showDetail(id){
     if(c.evidence&&c.evidence.length){
       html+=`<h3>证据（${c.evidence.length}）</h3>`;
       for(const ev of c.evidence){
-        html+=`<div class="ev"><a href="${ev.url}" target="_blank">${ev.title||ev.domain}</a>${ev.source_type?`<span class="note" style="margin-left:6px">[${STYPE_LABEL[ev.source_type]||ev.source_type}]</span>`:''}<br>${(ev.snippet||'').slice(0,220)}</div>`;
+        let tag='';
+        if(ev.media_rank){
+          const tm=ev.reported_at?String(ev.reported_at).slice(0,10):'时间未标注';
+          tag=`<span class="ev-src-tag">[ <span class="rk">全球可信榜第 ${ev.media_rank} 名 · ${esc(ev.media_name||'')} · ${esc(ev.factual||'')}</span> · <span class="tm">${esc(tm)}</span> ]</span>`;
+        }else{
+          const tm=ev.reported_at?String(ev.reported_at).slice(0,10):'时间未标注';
+          tag=`<span class="ev-src-tag">[ ${esc(STYPE_LABEL[ev.source_type]||ev.source_type||'来源')} · 非 Top30 榜单 · <span class="tm">${esc(tm)}</span> ]</span>`;
+        }
+        html+=`<div class="ev"><a href="${ev.url}" target="_blank">${ev.title||ev.domain}</a>${tag}<br>${(ev.snippet||'').slice(0,220)}</div>`;
       }
     }
   }

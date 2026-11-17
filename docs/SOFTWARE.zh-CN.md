@@ -1,6 +1,6 @@
 # NewsVerify 软件说明书
 
-**版本：** 0.5.2（Verity） · **发布日期：** 2026-11-17  
+**版本：** 0.6.0（Prism） · **发布日期：** 2026-11-17  
 **代码仓库：** https://github.com/zixiang2008/NewsVerify  
 **在线控制台：** https://new.caishen.today（局域网：`http://192.168.8.253:8095`）
 
@@ -211,6 +211,17 @@ curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
 3. 更新英文、中文、日文说明文档；
 4. 运行 `./scripts/sync_github.sh` 提交并推送脱敏源码；
 5. 部署到 NAS，验证 `/health`、`/api/version` 与页面版本徽标。
+
+---
+
+## 7.5 v0.6.0 新增能力
+
+- **多风格与背景音乐**：9 套可切换主题（极光/纸张/石墨/终端/海洋/森林/日落/紫罗兰/素黑白），选择本地持久化；背景音乐为 Web Audio 生成式氛围音（细雨/海浪/森林/夜曲），可开关、切换、调音量，无需外部音频文件。
+- **来源可读性与可视化**：Top30 面板常驻滚动条；每条证据标题右侧方括号显示媒体名、全球可信榜名次、事实等级与报道时间。
+- **合规信息采集增强**（`app/ingest/open_web.py`）：以公开 RSS / Google News RSS 扩大候选发现，遵守 robots.txt、按域名限速、有限重试；不绕过登录/付费墙/验证码；所有候选仍经可信来源白名单过滤后才进入证据池。
+- **多即时通讯接入**（`app/integrations/`）：参考 NoneBot/OneBot、Kirara AI 等成熟多通道框架的「适配器 + 配置驱动 + 统一入口」思路，提供 Telegram 及 Discord/Slack/飞书/钉钉/企业微信/公众号/QQ(OneBot)/LINE/Matrix/通用 Webhook 的接入抽象；统一入口为 `POST /api/v1/im/{key}/webhook`。
+- **后台管理** `/admin`（PIN `1314`）：查看（脱敏）API 配置、查看接入通道状态、发送测试回执；修改 `.env` 后需重启容器生效。
+- **理论来源专题页** `/theory`：公开页面，包含方法论、可信度频段体系由来、SVG 体系图、逐条引用出处、学术与全球评价。
 
 ---
 

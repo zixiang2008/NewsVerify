@@ -1,6 +1,6 @@
 # NewsVerify ソフトウェア仕様書
 
-**バージョン：** 0.5.2（Verity） · **リリース日：** 2026-11-17  
+**バージョン：** 0.6.0（Prism） · **リリース日：** 2026-11-17  
 **リポジトリ：** https://github.com/zixiang2008/NewsVerify  
 **公開コンソール：** https://new.caishen.today（LAN：`http://192.168.8.253:8095`）
 
@@ -211,6 +211,17 @@ curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
 3. 英語・中国語・日本語のREADMEとソフトウェア文書を更新。
 4. `./scripts/sync_github.sh` を実行し、機微情報を除いたソースを push。
 5. NAS へ展開し、`/health`、`/api/version`、画面の版本バッジを検証。
+
+---
+
+## 7.5 v0.6.0 の新機能
+
+- **テーマと音楽**：9 つの切り替えテーマ（Aurora/Paper/Slate/Terminal/Ocean/Forest/Sunset/Violet/Mono）をローカル保存。Web Audio 生成アンビエント音（雨/波/森/夜）は再生・停止・切替・音量調整が可能で、外部音源ファイルは不要です。
+- **情報源の可読化と可視化**：Top30 パネルに常時スクロールバー。各証拠タイトルの右に媒体名・世界公信力ランク・事実評価・報道日を括弧で表示。
+- **準拠した情報収集**（`app/ingest/open_web.py`）：公開 RSS / Google News RSS で候補を拡大し、robots.txt を尊重、ホスト別レート制限と有限リトライを実施。ログイン/ペイウォール/キャプチャの回避は行わず、全候補は信頼情報源ホワイトリストを通過してから証拠プールへ。
+- **複数 IM 接入**（`app/integrations/`）：NoneBot/OneBot、Kirara AI などの成熟フレームワークの「アダプター＋設定駆動＋統合入口」方式を参考に、Telegram/Discord/Slack/飛書/釘釘/WeCom/公式アカウント/QQ(OneBot)/LINE/Matrix/汎用 Webhook のアダプターを提供。統合入口は `POST /api/v1/im/{key}/webhook`。
+- **管理コンソール** `/admin`（PIN `1314`）：マスク済み API 設定、チャネル状態の閲覧とテスト返信。`.env` 変更後はコンテナ再起動が必要です。
+- **理論ページ** `/theory`：方法論、信頼度バンド体系の由来、SVG 図解、出典一覧、学術・グローバル評価を公開。
 
 ---
 
