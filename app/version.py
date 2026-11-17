@@ -15,6 +15,11 @@ THEMES = [
     {"key": "paper", "name": "纸张 · Paper", "description": "浅色阅读友好风格"},
     {"key": "slate", "name": "石墨 · Slate", "description": "中性专业的控制台风格"},
     {"key": "terminal", "name": "终端 · Terminal", "description": "高对比等宽终端风格"},
+    {"key": "ocean", "name": "海洋 · Ocean", "description": "深海青蓝，沉静通透"},
+    {"key": "forest", "name": "森林 · Forest", "description": "自然墨绿，护眼舒缓"},
+    {"key": "sunset", "name": "日落 · Sunset", "description": "暖橙玫红，温暖柔和"},
+    {"key": "violet", "name": "紫罗兰 · Violet", "description": "深紫优雅，专注沉浸"},
+    {"key": "mono", "name": "素黑白 · Mono", "description": "黑白衬线，纸质阅读"},
 ]
 
 RELEASES = [
