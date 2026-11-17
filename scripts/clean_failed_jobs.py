@@ -17,7 +17,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+
+# Allow running as `python scripts/clean_failed_jobs.py` from any cwd.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select, func
 
