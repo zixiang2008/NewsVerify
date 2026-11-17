@@ -6,9 +6,9 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.6.1"
+VERSION = "0.7.0"
 RELEASE_DATE = "2026-11-17"
-CODENAME = "Echo"
+CODENAME = "Bridge"
 
 THEMES = [
     {"key": "aurora", "name": "极光 · Aurora", "description": "深蓝玻璃质感，默认风格"},
@@ -23,6 +23,21 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.7.0",
+        "date": "2026-11-17",
+        "codename": "Bridge",
+        "summary": "主流即时通讯接入改为交互式向导：扫码/Token 辅助、填表即生效、一键真实测试，无需改代码或重启",
+        "changes": [
+            "新增独立接入向导页 /admin/im：11 个主流平台卡片式引导，四步完成接入（官方凭证 → 填表 → 扫码/回调 → 测试）",
+            "新增数据库凭证存储 im_channel_configs：网页保存后立即生效并跨重启保留，页面回显自动脱敏，彻底告别改 .env 代码与重启容器",
+            "每个平台提供官方配置台直达链接、逐步操作说明与所需字段说明，全部来自平台官方文档",
+            "扫码绑定：Telegram 生成 t.me 深链二维码并轮询 /start 完成绑定；飞书/钉钉/企业微信/LINE/QQ OneBot 提供官方扫码入口与接收 URL 复制",
+            "统一接收地址一键复制，按平台给出填入位置提示；支持飞书/钉钉加签、Slack 签名密钥等安全校验",
+            "一键真实测试：按各平台官方消息格式构造测试消息（飞书/钉钉/企微/Discord/Slack/LINE/Matrix/Telegram），结果回写状态",
+            "新增 segno 二维码依赖与渠道凭证脱敏/合并逻辑，附 15 项接入逻辑自动测试",
+        ],
+    },
     {
         "version": "0.6.1",
         "date": "2026-11-17",

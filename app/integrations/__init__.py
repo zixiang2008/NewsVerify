@@ -52,15 +52,123 @@ class BaseChannel(ABC):
         return True  # overridden by channels that require signed webhooks
 
 
+class GenericWebhookChannel(BaseChannel):
+    """Config-driven outbound channel for webhook-based platforms.
+
+    Builds the platform-specific JSON body (Feishu / DingTalk / WeCom / Slack /
+    Discord / LINE / generic) from stored credentials so a single test button
+    verifies the real integration format, not a generic placeholder.
+    """
+
+    def __init__(self, key: str, label: str, webhook_url: str = "", secret: str = "", credentials: dict | None = None):
+        self.key = key
+        self.label = label
+        self.credentials = dict(credentials or {})
+        self.webhook_url = webhook_url or self.credentials.get("webhook_url", "")
+        self.secret = secret or self.credentials.get("signing_secret", "")
+        self.configured = bool(webhook_url or self.credentials.get("webhook_url")
+                               or self.credentials.get("channel_access_token")
+                               or self.credentials.get("access_token")
+                               or self.credentials.get("app_id"))
+
+    async def parse_inbound(self, payload: Dict[str, Any], signature: str = "") -> Optional[IMMessage]:
+        # Accept both a normalised body and common platform shapes.
+        text = payload.get("text")
+        if text is None:
+            for k in ("content", "message", "question", "prompt"):
+                if k in payload:
+                    text = payload[k]
+                    break
+        if isinstance(text, dict):
+            text = text.get("text") or text.get("content")
+        if not text:
+            return None
+        chat_id = str(payload.get("chat_id") or payload.get("channel_id") or payload.get("chatId") or "web")
+        user_id = str(payload.get("user_id") or payload.get("userId") or "unknown")
+        return IMMessage(self.key, chat_id, user_id, str(text), payload)
+
+    def _payload(self, text: str) -> tuple[Dict[str, Any], Dict[str, str]]:
+        """Return (json body, extra headers) for the platform's webhook format."""
+        c = self.credentials
+        if self.key == "feishu":
+            body: Dict[str, Any] = {"msg_type": "text", "content": {"text": text}}
+            secret = c.get("signing_secret") or self.secret
+            if secret:
+                import time, hashlib, base64
+                ts = str(int(time.time()))
+                s = f"{ts}\n{secret}".encode()
+                h = base64.b64encode(hashlib.sha256(s).digest()).decode()
+                body["timestamp"] = ts
+                body["sign"] = h
+            return body, {}
+        if self.key == "dingtalk":
+            body = {"msgtype": "text", "text": {"content": text}}
+            secret = c.get("signing_secret") or self.secret
+            if secret:
+                import time, hashlib, base64, urllib.parse, hmac
+                ts = str(int(time.time() * 1000))
+                sign_str = f"{ts}\n{secret}"
+                code = base64.b64encode(
+                    hmac.new(secret.encode(), sign_str.encode(), hashlib.sha256).digest()
+                ).decode()
+                body["timestamp"] = ts
+                body["sign"] = urllib.parse.quote_plus(code)
+            return body, {}
+        if self.key == "wecom":
+            return {"msgtype": "text", "text": {"content": text}}, {}
+        if self.key == "discord":
+            return {"content": text}, {}
+        if self.key == "slack":
+            return {"text": text}, {}
+        if self.key == "line":
+            return {"messages": [{"type": "text", "text": text}]}, {
+                "Authorization": f"Bearer {c.get('channel_access_token', '')}"
+            }
+        return {"text": text, "chat_id": ""}, {}
+
+    async def send_message(self, chat_id: str, reply: IMReply) -> bool:
+        if not self.configured:
+            return False
+        try:
+            import httpx
+            body, headers = self._payload(reply.text[:4000])
+            async with httpx.AsyncClient(timeout=15) as c:
+                if self.webhook_url:
+                    r = await c.post(self.webhook_url, json=body, headers=headers)
+                    return r.status_code < 300
+                if self.key == "line" and self.credentials.get("channel_access_token"):
+                    r = await c.post("https://api.line.me/v2/bot/message/broadcast", json=body, headers=headers)
+                    return r.status_code < 300
+                if self.key == "matrix":
+                    hs = str(self.credentials.get("homeserver", "")).rstrip("/")
+                    room = self.credentials.get("room_id") or chat_id
+                    if not hs or not room:
+                        return False
+                    r = await c.post(
+                        f"{hs}/_matrix/client/v3/rooms/{room}/send/m.room.message",
+                        headers={"Authorization": f"Bearer {self.credentials.get('access_token', '')}"},
+                        json={"msgtype": "m.text", "body": reply.text[:4000]},
+                    )
+                    return r.status_code < 300
+            return False
+        except Exception:
+            return False
+
+
 class TelegramChannel(BaseChannel):
     key = "telegram"
     label = "Telegram"
 
-    def __init__(self):
+    def __init__(self, credentials: dict | None = None):
         from app.core.config import get_settings
-        self.token = get_settings().telegram_bot_token or ""
+        c = dict(credentials or {})
+        self.token = c.get("bot_token") or get_settings().telegram_bot_token or ""
+        ids = c.get("allowed_user_ids")
+        if ids is None:
+            self.allowed = set(get_settings().allowed_user_ids())
+        else:
+            self.allowed = {int(x.strip()) for x in str(ids).split(",") if x.strip().isdigit()}
         self.configured = bool(self.token)
-        self.allowed = set(get_settings().allowed_user_ids())
 
     async def parse_inbound(self, payload: Dict[str, Any], signature: str = "") -> Optional[IMMessage]:
         msg = payload.get("message") or payload.get("edited_message")
@@ -88,49 +196,25 @@ class TelegramChannel(BaseChannel):
             return False
 
 
-class GenericWebhookChannel(BaseChannel):
-    """Generic channel for Slack / Discord / Feishu / DingTalk / WeCom / LINE etc.
+def get_settings_value(env_name: str) -> str:
+    """Read a setting from env lazily (avoids import-time Settings caching)."""
+    import os
+    return os.getenv(env_name, "")
 
-    Inbound: platforms post a normalised JSON body
-      {"chat_id": "...", "user_id": "...", "text": "..."}
-    Outbound: a configurable webhook URL receives {"text": "..."}.
-    This keeps the adapter open-ended so any mainstream IM can be connected by
-    configuration alone, without forking the app.
-    """
 
-    def __init__(self, key: str, label: str, webhook_url: str = "", secret: str = ""):
-        self.key = key
-        self.label = label
-        self.webhook_url = webhook_url
-        self.secret = secret
-        self.configured = bool(webhook_url)
+def build_channel(key: str, credentials: dict | None, label: str = "") -> BaseChannel | None:
+    c = dict(credentials or {})
+    if key == "telegram":
+        return TelegramChannel(c)
+    if key in CHANNEL_CATALOGUE_KEYS:
+        return GenericWebhookChannel(key, label or key, credentials=c)
+    return None
 
-    async def parse_inbound(self, payload: Dict[str, Any], signature: str = "") -> Optional[IMMessage]:
-        # Accept both a normalised body and common platform shapes.
-        text = payload.get("text")
-        if text is None:
-            for k in ("content", "message", "question", "prompt"):
-                if k in payload:
-                    text = payload[k]
-                    break
-        if isinstance(text, dict):
-            text = text.get("text") or text.get("content")
-        if not text:
-            return None
-        chat_id = str(payload.get("chat_id") or payload.get("channel_id") or payload.get("chatId") or "web")
-        user_id = str(payload.get("user_id") or payload.get("userId") or "unknown")
-        return IMMessage(self.key, chat_id, user_id, str(text), payload)
 
-    async def send_message(self, chat_id: str, reply: IMReply) -> bool:
-        if not self.webhook_url:
-            return False
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.post(self.webhook_url, json={"text": reply.text[:4000], "chat_id": chat_id})
-                return r.status_code < 300
-        except Exception:
-            return False
+CHANNEL_CATALOGUE_KEYS = {
+    "discord", "slack", "feishu", "dingtalk", "wecom", "wechat_oa",
+    "qq_onebot", "line", "matrix", "generic",
+}
 
 
 # Mainstream IM catalogue — adapters are config-driven from settings/env.
@@ -154,21 +238,53 @@ class ChannelRegistry:
         self._channels: Dict[str, BaseChannel] = {}
         self._handler: Optional[Callable[[IMMessage], Any]] = None
         self._bootstrapped = False
+        self._db_credentials: Dict[str, dict] = {}
 
     def bootstrap(self) -> None:
         if self._bootstrapped:
             return
         self._bootstrapped = True
-        self._channels["telegram"] = TelegramChannel()
-        # Optional webhook channels are configured via env: NV_IM_{KEY}_WEBHOOK
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        """(Re)build channels from DB credentials with env fallback.
+
+        Called at startup and again whenever the admin wizard saves a channel,
+        so edits take effect immediately without a container restart.
+        """
         import os
+        self._channels.clear()
         for ch in CHANNEL_CATALOGUE:
-            key = ch["key"]
+            key, label = ch["key"], ch["label"]
+            db_creds = self._db_credentials.get(key, {})
             if key == "telegram":
-                continue
-            url = os.getenv(f"NV_IM_{key.upper()}_WEBHOOK", "")
-            secret = os.getenv(f"NV_IM_{key.upper()}_SECRET", "")
-            self._channels[key] = GenericWebhookChannel(key, ch["label"], url, secret)
+                creds = dict(db_creds)
+                if not creds.get("bot_token"):
+                    creds["bot_token"] = get_settings_value("TELEGRAM_BOT_TOKEN")
+                self._channels[key] = TelegramChannel(creds)
+            else:
+                creds = dict(db_creds)
+                if not creds.get("webhook_url"):
+                    creds["webhook_url"] = os.getenv(f"NV_IM_{key.upper()}_WEBHOOK", "")
+                if not creds.get("signing_secret"):
+                    creds["signing_secret"] = os.getenv(f"NV_IM_{key.upper()}_SECRET", "")
+                self._channels[key] = GenericWebhookChannel(key, label, credentials=creds)
+
+    async def reload_from_db(self) -> None:
+        from app.integrations.channel_store import load_all_raw
+        self._db_credentials = await load_all_raw()
+        self._bootstrapped = True
+        self.rebuild()
+
+    def set_db_credentials(self, key: str, credentials: dict) -> None:
+        self._db_credentials[key] = dict(credentials)
+        self._bootstrapped = True
+        self.rebuild()
+
+    def remove_db_credentials(self, key: str) -> None:
+        self._db_credentials.pop(key, None)
+        self._bootstrapped = True
+        self.rebuild()
 
     def set_handler(self, handler: Callable[[IMMessage], Any]) -> None:
         self._handler = handler

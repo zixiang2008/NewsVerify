@@ -11,6 +11,8 @@ from app.verification.top_media import TOP_MEDIA, NOTE
 from app.verification.source_policy import classify_source
 from app.integrations import registry as im_registry, CHANNEL_CATALOGUE
 from app.integrations import IMMessage, IMReply
+from app.integrations.guides import CHANNEL_GUIDES, public_catalogue
+from app.integrations import channel_store
 from fastapi import Depends, HTTPException
 
 def verify_api_key(request: Request):
@@ -27,6 +29,16 @@ def verify_api_key(request: Request):
     return True
 
 app = FastAPI(title="NewsVerify", version=VERSION)
+
+
+@app.on_event("startup")
+async def _load_im_channels():
+    """Load wizard-saved credentials so saved channels work after restart."""
+    try:
+        await im_registry.reload_from_db()
+    except Exception:
+        pass
+
 
 PIN_CODE = "1314"
 
@@ -79,7 +91,8 @@ a{color:var(--accent);text-decoration:none}
 <div class="card"><h2>🔑 调用的 API 与可设置信息</h2><table id="cfgTable"><tr><td>加载中…</td></tr></table>
 <p class="sub" id="envNotice"></p></div>
 <div class="card"><h2>💬 即时通讯接入入口（主流平台）</h2>
-<p class="sub">统一 Webhook 入口：<code>/api/v1/im/{平台key}/webhook</code>。配置方式见下方各平台文档；状态为「已配置」即可接收。</p>
+<p class="sub"><b>推荐：使用交互式接入向导</b> —— 扫码 / Token 辅助、填表即生效、一键真实测试，无需改代码或重启。<a href="/admin/im" style="font-weight:700">→ 打开 IM 接入向导</a></p>
+<p class="sub">统一 Webhook 入口：<code>/api/v1/im/{平台key}/webhook</code>。下方为兼容旧配置的只读概览。</p>
 <table id="chTable"><tr><td>加载中…</td></tr></table></div>
 <div class="card"><h2>📡 Webhook 接入测试</h2><p class="sub">向指定平台通道发送一条测试回执。</p>
 <select id="testCh" style="background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px;border-radius:8px"></select>
@@ -241,15 +254,123 @@ async def admin_channels():
     return {"channels": im_registry.catalogue()}
 
 
+@app.get("/admin/im", response_class=HTMLResponse)
+async def admin_im_wizard():
+    """Interactive, guided IM onboarding console."""
+    from app.web.im_wizard import render_page
+    return HTMLResponse(render_page(CHANNEL_GUIDES, public_catalogue()))
+
+
+@app.get("/api/admin/channels/guide")
+async def admin_channels_guide():
+    """Return per-platform wizard metadata + masked saved credentials."""
+    configs: dict = {}
+    for key in CHANNEL_GUIDES:
+        rec = await channel_store.get_record(key)
+        if not rec:
+            continue
+        guide = CHANNEL_GUIDES[key]
+        secrets = {f["name"] for f in guide.get("fields", []) if f.get("secret")}
+        configs[key] = {
+            "configured": bool(rec["credentials"]),
+            "enabled": rec["enabled"],
+            "bound_chat_id": rec["bound_chat_id"],
+            "credentials": channel_store.mask_credentials(rec["credentials"], secrets),
+            "last_test_ok": rec["last_test_ok"],
+            "last_test_at": rec["last_test_at"],
+            "last_error": rec["last_error"],
+        }
+    channels = []
+    for c in public_catalogue():
+        channels.append({**c, "configured": bool(configs.get(c["key"], {}).get("configured"))})
+    return {"channels": channels, "config": configs, "guides": CHANNEL_GUIDES}
+
+
+@app.post("/api/admin/channels/{key}/config")
+async def admin_channel_save(key: str, request: Request):
+    """Save wizard credentials. Takes effect immediately (no restart)."""
+    guide = CHANNEL_GUIDES.get(key)
+    if not guide:
+        return JSONResponse({"error": "unknown channel"}, status_code=404)
+    body = await request.json()
+    old = await channel_store.get_raw_credentials(key)
+    secrets = {f["name"] for f in guide.get("fields", []) if f.get("secret")}
+    merged = channel_store.merge_credentials(old, body, secrets)
+    await channel_store.save_record(key, merged, enabled=True)
+    im_registry.set_db_credentials(key, merged)
+    return {"ok": True, "configured": bool(merged), "credentials": channel_store.mask_credentials(merged, secrets)}
+
+
+@app.delete("/api/admin/channels/{key}/config")
+async def admin_channel_delete(key: str):
+    await channel_store.delete_record(key)
+    im_registry.remove_db_credentials(key)
+    return {"ok": True}
+
+
+@app.get("/api/admin/channels/{key}/qrcode")
+async def admin_channel_qrcode(key: str):
+    """Generate a binding QR (SVG) from the official deep link for this platform."""
+    guide = CHANNEL_GUIDES.get(key)
+    if not guide:
+        return JSONResponse({"error": "unknown channel"}, status_code=404)
+    creds = await channel_store.get_raw_credentials(key)
+    qr = guide.get("qr", {})
+    url = ""
+    if qr.get("kind") == "deeplink" and qr.get("template"):
+        username = (creds.get("bot_username") or "").lstrip("@")
+        if not username:
+            return {"error": "请先在「填写凭证」中保存机器人用户名（bot_username），再生成二维码。"}
+        url = qr["template"].format(bot_username=username)
+    elif qr.get("kind") == "official" and guide.get("connect_url"):
+        url = guide["connect_url"]
+    if not url:
+        return {"error": "该平台通过官方后台扫码绑定，请打开官方配置台获取二维码。"}
+    try:
+        import segno
+        import io
+        qrcode = segno.make(url, error="m")
+        buf = io.BytesIO()
+        qrcode.save(buf, kind="svg", scale=5, border=2,
+                    dark="#0b1220", light="#ffffff")
+        svg = buf.getvalue().decode("utf-8")
+        return {"ok": True, "url": url, "svg": svg}
+    except Exception as e:
+        return {"error": f"二维码生成失败：{e}", "url": url}
+
+
+@app.get("/api/admin/channels/{key}/bind-status")
+async def admin_channel_bind_status(key: str):
+    """Polled by the wizard to detect that a scan-and-start completed."""
+    rec = await channel_store.get_record(key)
+    if not rec:
+        return {"bound": False}
+    return {"bound": bool(rec["bound_chat_id"]), "bound_chat_id": rec["bound_chat_id"]}
+
+
 @app.post("/api/admin/channels/{key}/test")
 async def admin_channel_test(key: str, request: Request):
-    """Send a test reply through a configured webhook channel."""
+    """Send a real test message through the configured platform adapter."""
     ch = im_registry.get(key)
     if not ch:
         return JSONResponse({"error": "unknown channel"}, status_code=404)
-    body = await request.json()
-    ok = await ch.send_message(str(body.get("chat_id", "test")), IMReply(text=str(body.get("text", "NewsVerify 测试消息"))))
-    return {"ok": ok, "configured": ch.configured}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    chat = str(body.get("chat_id", "") or "")
+    rec = await channel_store.get_record(key)
+    if not chat and rec and rec["bound_chat_id"]:
+        chat = rec["bound_chat_id"]
+    if not chat:
+        chat = "test"
+    try:
+        ok = await ch.send_message(chat, IMReply(text=str(body.get("text", "NewsVerify 接入测试消息"))))
+        await channel_store.set_test_result(key, ok, "" if ok else "发送失败：请检查凭证 / Webhook 地址 / 用户 ID")
+        return {"ok": ok, "configured": ch.configured, "detail": "" if ok else "请检查凭证是否正确、用户是否已与机器人建立会话"}
+    except Exception as e:
+        await channel_store.set_test_result(key, False, str(e)[:300])
+        return {"ok": False, "configured": ch.configured, "detail": str(e)[:300]}
 
 
 @app.post("/api/v1/im/{key}/webhook")
@@ -264,6 +385,17 @@ async def im_webhook(key: str, request: Request):
         raise HTTPException(status_code=401, detail="invalid api key")
     payload = await request.json()
     signature = request.headers.get("X-Signature", "")
+    # Telegram /start = scan-and-bind completion; record the chat for test pushes.
+    if key == "telegram":
+        msg = payload.get("message") or {}
+        text = str(msg.get("text", ""))
+        if text.startswith("/start"):
+            cid = str((msg.get("chat") or {}).get("id", ""))
+            if cid:
+                try:
+                    await channel_store.set_bound_chat("telegram", cid)
+                except Exception:
+                    pass
     reply = await im_registry.dispatch(key, payload, signature)
     return {"ok": True, "reply": reply}
 

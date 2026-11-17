@@ -1,8 +1,20 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.6.1 (Echo, 2026-11-17)**.
+All notable changes to NewsVerify are documented here. The current version is **0.7.0 (Bridge, 2026-11-17)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.7.0 — Bridge (2026-11-17)
+
+### Added
+- Interactive IM onboarding wizard at `/admin/im` covering 11 mainstream platforms in four guided steps (official credentials → form → QR/callback → test), modelled on the adapter-driven WebUI wizards of AstrBot / NoneBot / Koishi.
+- Database-backed credential store (`im_channel_configs`): settings saved from the web wizard take effect immediately and survive restarts; values are masked on read, so no `.env` editing and no container restart are required.
+- QR binding: Telegram deep-link QR with `/start` polling; official scan-entry guidance and one-click inbound-URL copy for Feishu / DingTalk / WeCom / LINE / QQ OneBot.
+- Per-platform outbound message formats for real test messages (Feishu/DingTalk signing, WeCom, Discord, Slack, LINE, Matrix, Telegram); test results are recorded on each channel.
+- `segno` QR dependency and 15 automated onboarding-logic checks.
+
+### Changed
+- Admin console now links prominently to the guided wizard; the old channel table remains as a read-only overview.
 
 ## 0.6.1 — Echo (2026-11-17)
 

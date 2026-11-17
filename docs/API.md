@@ -24,11 +24,17 @@ Auth: header `X-API-Key: <key>` or query `?api_key=<key>`.
 - `GET /api/source-policy` — trusted-source whitelist
 - `GET /api/admin/config` — masked API configuration (admin PIN session)
 - `GET /api/admin/channels` — IM connector catalogue and status
-- `POST /api/admin/channels/{key}/test` — send a test reply through a webhook channel
+- `GET /api/admin/channels/guide` — wizard metadata per platform + masked saved credentials
+- `POST /api/admin/channels/{key}/config` — save wizard credentials (JSON); effective immediately, no restart
+- `DELETE /api/admin/channels/{key}/config` — clear a platform's saved credentials
+- `GET /api/admin/channels/{key}/qrcode` — binding QR (SVG) from the official deep link
+- `GET /api/admin/channels/{key}/bind-status` — poll whether scan-and-bind completed
+- `POST /api/admin/channels/{key}/test` — send a real test message in the platform's native format
 
 ## Pages
 - `/` — verification console
 - `/admin` — admin console (PIN `1314`)
+- `/admin/im` — interactive IM onboarding wizard (scan / token assisted, 4 steps)
 - `/theory` — public "Rational News-Reading Theoretical Sources" page
 
 ## API Key

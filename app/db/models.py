@@ -142,6 +142,27 @@ class Notification(Base):
     __table_args__ = (UniqueConstraint("subscription_id", "content_hash", name="uq_sub_content"),)
 
 
+class IMChannelConfig(Base):
+    """Per-platform instant-messaging connection settings, edited from the admin wizard.
+
+    Credentials are stored as JSON (masked on read). Replaces the old
+    "edit .env + restart container" workflow so users can connect a channel
+    interactively and test it immediately.
+    """
+
+    __tablename__ = "im_channel_configs"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    credentials: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    bound_chat_id: Mapped[str] = mapped_column(String(255), default="")
+    last_test_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_test_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
 class RatingSnapshot(Base):
     __tablename__ = "rating_snapshots"
 

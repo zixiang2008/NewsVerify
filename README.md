@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.6.1 (Echo)** · 2026-11-17.
+**Self-hosted, auditable fact-checking workspace.** Version **0.7.0 (Bridge)** · 2026-11-17.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -22,6 +22,12 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | English | Six systems and verdict rules |
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
+
+## What is new in 0.7.0
+
+- **Interactive IM onboarding wizard** at `/admin/im`: connect 11 mainstream platforms in four guided steps — official credentials, fill a form, scan/copy the callback URL, run a real test. Modelled on the WebUI wizards of AstrBot / NoneBot / Koishi.
+- **No more code or restarts**: credentials are saved to the database, masked on display, and take effect immediately. Telegram supports a scan-to-bind QR; Feishu / DingTalk / WeCom / LINE / QQ OneBot provide official scan entries and a one-click copy of the inbound URL.
+- Ambient sound library expanded to **20 generative scenes** with click-to-play, click-again-to-stop and a 5-second auto-fade panel.
 
 ## What is new in 0.6.1
 
