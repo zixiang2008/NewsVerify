@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import List, Dict, Any
 from urllib.parse import urlparse
@@ -55,12 +56,35 @@ async def collect_evidence(claim_text: str, max_results: int = 8) -> List[Dict[s
     except Exception:
         pass
 
+    # 通用搜索常被维基/百科/广告占据，可信媒体命中率低。补充对头部公信力
+    # 媒体的 site: 查询（公开搜索，合规），确保证据池有真实的主流媒体链接。
+    if len([r for r in candidate_hits if (classify_source(r.get("url", ""))[0] in ("media", "fact_checker", "authority"))]) < max_results:
+        from app.verification.top_media import TOP_MEDIA
+        from app.verification.search import search_duckduckgo as _ddg
+        head = [m for m in TOP_MEDIA[:8]]
+        async def _site(m):
+            try:
+                hits = await asyncio.wait_for(_ddg(f"site:{m['domain']} {claim_text[:110]}", max_results=2), timeout=12)
+                return hits if isinstance(hits, list) else []
+            except Exception:
+                return []
+        for batch in range(0, len(head), 4):
+            group = head[batch:batch + 4]
+            for hits in await asyncio.gather(*[_site(m) for m in group], return_exceptions=True):
+                if isinstance(hits, list):
+                    candidate_hits.extend([h for h in hits if isinstance(h, dict) and h.get("url")])
+
     for r in candidate_hits:
         url = r.get("url", "")
         if not url or url in seen_urls:
             continue
         source_type, host = classify_source(url)
         if source_type is None:
+            continue
+        # 搜索引擎域名只是检索入口，不是证据本身。它们的点击追踪/广告跳转
+        # 链接（如 bing.com/aclick）会被白名单放行，但绝不能进入证据池，
+        # 否则会跟随大量广告重定向，既污染证据又严重拖慢核查。
+        if source_type == "search_engine":
             continue
         seen_urls.add(url)
         fr = await fetch_url(url)
