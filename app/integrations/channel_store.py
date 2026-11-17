@@ -30,7 +30,15 @@ def mask(value: Any) -> str:
 
 
 def mask_credentials(creds: Dict[str, Any], secret_names: set[str]) -> Dict[str, str]:
-    return {k: ("••••" if k in secret_names and str(v or "") else mask(v)) for k, v in creds.items()}
+    """Mask secrets fully; show non-secret fields verbatim so users can edit them."""
+    out: Dict[str, str] = {}
+    for k, v in creds.items():
+        s = str(v or "")
+        if k in secret_names and s:
+            out[k] = "••••"
+        else:
+            out[k] = s
+    return out
 
 
 def merge_credentials(old: Dict[str, Any], new: Dict[str, Any], secret_names: set[str]) -> Dict[str, Any]:
