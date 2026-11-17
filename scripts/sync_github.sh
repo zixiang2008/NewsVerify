@@ -38,6 +38,14 @@ else
   git remote add origin "$REPO_URL"
 fi
 
+# Commit local changes first so a rebase never fails on a dirty tree.
+git add -A
+if git diff --cached --quiet; then
+  echo "No local changes to publish (version $VERSION already staged)."
+else
+  git commit -m "release: v${VERSION} - sync website and tri-language docs"
+fi
+
 # Rebase on the remote state when it exists; tolerate an empty new repository.
 git fetch origin "$BRANCH" >/dev/null 2>&1 || true
 if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
@@ -47,12 +55,5 @@ if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
   }
 fi
 
-git add -A
-if git diff --cached --quiet; then
-  echo "No changes to publish (version $VERSION already synced)."
-  exit 0
-fi
-
-git commit -m "release: v${VERSION} - sync website and tri-language docs"
 git push -u origin "HEAD:${BRANCH}"
 echo "Published NewsVerify v${VERSION} to ${REPO_URL} (${BRANCH})."

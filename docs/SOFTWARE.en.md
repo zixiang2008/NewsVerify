@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.5.0 (Atlas) · **Release date:** 2026-11-17  
+**Version:** 0.5.1 (Atlas) · **Release date:** 2026-11-17  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -146,7 +146,7 @@ The following results come from the local deployment on a Synology N150-P NAS, n
 | Check | Result |
 | --- | --- |
 | `/health` | HTTP 200 |
-| Front-end JavaScript syntax | `node --check` passed; rendered script about 27.7k characters after v0.5.0 |
+| Front-end JavaScript syntax | `node --check` passed; rendered script about 27.7k characters after v0.5.1 |
 | `/api/top-media` | 30 outlets returned with rank, factual tier, independence, type and URL |
 | End-to-end full check | `done` in about 101 s for the verified sample |
 | Media cross-check | 10 of 30 outlets lit; 20 openable related sources |

@@ -6,7 +6,7 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 RELEASE_DATE = "2026-11-17"
 CODENAME = "Atlas"
 
@@ -18,6 +18,17 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.5.1",
+        "date": "2026-11-17",
+        "codename": "Atlas",
+        "summary": "修复追踪设置按钮的运行时脚本语法错误，确保页面按钮全部可用",
+        "changes": [
+            "修复 showTrackSettings() 中因 Python 字符串转义被吞掉而导致的整段 JS 解析失败",
+            "把内嵌 onclick 改为 HTML 实体写法，避免引号嵌套歧义",
+            "新增按运行时渲染结果校验前端脚本的方法，防止源码通过但页面失效",
+        ],
+    },
     {
         "version": "0.5.0",
         "date": "2026-11-17",

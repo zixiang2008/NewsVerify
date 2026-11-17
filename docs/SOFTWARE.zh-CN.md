@@ -1,6 +1,6 @@
 # NewsVerify 软件说明书
 
-**版本：** 0.5.0（Atlas） · **发布日期：** 2026-11-17  
+**版本：** 0.5.1（Atlas） · **发布日期：** 2026-11-17  
 **代码仓库：** https://github.com/zixiang2008/NewsVerify  
 **在线控制台：** https://new.caishen.today（局域网：`http://192.168.8.253:8095`）
 
@@ -146,7 +146,7 @@ PostgreSQL 表：`events`、`claims`、`sources`、`evidence`、`verdicts`、`jo
 | 检查项 | 结果 |
 | --- | --- |
 | `/health` | HTTP 200 |
-| 前端 JavaScript 语法 | `node --check` 通过；v0.5.0 后渲染脚本约 2.77 万字符 |
+| 前端 JavaScript 语法 | `node --check` 通过；v0.5.1 后渲染脚本约 2.77 万字符 |
 | `/api/top-media` | 返回 30 家，含排名、事实等级、独立性、类型与 URL |
 | 端到端完整核查 | 样本任务约 101 秒完成，状态 `done` |
 | 媒体交叉核查 | 30 家中 10 家点亮，20 条可打开的相关来源 |

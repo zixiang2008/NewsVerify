@@ -1,6 +1,6 @@
 # NewsVerify ソフトウェア仕様書
 
-**バージョン：** 0.5.0（Atlas） · **リリース日：** 2026-11-17  
+**バージョン：** 0.5.1（Atlas） · **リリース日：** 2026-11-17  
 **リポジトリ：** https://github.com/zixiang2008/NewsVerify  
 **公開コンソール：** https://new.caishen.today（LAN：`http://192.168.8.253:8095`）
 
@@ -146,7 +146,7 @@ PostgreSQL テーブル：`events`、`claims`、`sources`、`evidence`、`verdic
 | 検査項目 | 結果 |
 | --- | --- |
 | `/health` | HTTP 200 |
-| フロントエンド JS 構文 | `node --check` 合格。v0.5.0 後は約 2.77 万文字 |
+| フロントエンド JS 構文 | `node --check` 合格。v0.5.1 後は約 2.77 万文字 |
 | `/api/top-media` | 30 媒体を返却（順位・事実等級・独立性・種別・URL） |
 | 端到端の完全検証 | 検証サンプルは約 101 秒で `done` |
 | 媒体相互確認 | 30 家中 10 家が点灯、20 件の開ける関連出典 |

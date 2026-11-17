@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.5.0（Atlas） · 文档更新：2026-11-17
+> 软件版本：0.5.1（Atlas） · 文档更新：2026-11-17
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.5.0）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.5.1）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -349,7 +349,7 @@ $DOCKER compose logs -f bot worker
 
 ---
 
-## 13. v0.5.0：界面模板、版本体系与三语文档
+## 13. v0.5.x：界面模板、版本体系与三语文档
 
 ### 13.1 多风格页面模板
 
@@ -371,3 +371,7 @@ $DOCKER compose logs -f bot worker
 ### 13.3 三语说明与 GitHub 同步
 
 默认语言为英文，另有中文与日文；完整说明分别位于 `docs/SOFTWARE.en.md`、`docs/SOFTWARE.zh-CN.md`、`docs/SOFTWARE.ja.md`。`scripts/sync_github.sh` 会检查 `.env` 是否被忽略、在必要时初始化仓库、rebase 远端、按当前版本提交并推送到 `https://github.com/zixiang2008/NewsVerify`。
+
+### 13.4 v0.5.1 运行时修复
+
+首次部署后发现 `showTrackSettings()` 里的 `onclick` 因为 Python 三引号字符串吞掉反斜杠，导致整段 JS 在浏览器里解析失败、所有按钮失效。0.5.1 改用 HTML 实体 `&quot;` 避免引号嵌套，并增加“先按 Python 字符串求值、再用 `node --check` 校验”的检查方式，确保源码检查与运行时一致。

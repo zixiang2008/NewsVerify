@@ -610,7 +610,7 @@ h1{font-size:24px;font-weight:700}
 .sub{color:var(--muted);font-size:12px;margin-top:2px}
 .badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:11px;background:rgba(56,189,248,.12);color:var(--accent);border:1px solid rgba(56,189,248,.3)}
 
-/* ==== v0.5.0 顶部导航 / 主题模板 ==== */
+/* ==== v0.5.x 顶部导航 / 主题模板 ==== */
 .topbar{align-items:flex-start}
 .brand .kicker{font-size:10px;letter-spacing:2.2px;color:var(--accent);font-weight:800;margin-bottom:5px}
 .header-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -1513,7 +1513,7 @@ async function showTrackSettings(id){
   html+=`<p class="note">修改后点击保存，系统会按新的频率与时间重新安排后续追踪；更新检测与新证据推送逻辑同步生效。</p>`;
   html+=`<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn small" onclick="saveTrackSettings('${d.id}',${hasSub})">💾 保存设置</button>
-    ${hasSub?'':'<button class="btn small secondary" onclick="trackEvent(\''+d.id+'\',\'24h\')">先开启追踪</button>'}
+    ${hasSub?'':'<button class="btn small secondary" onclick="trackEvent(&quot;'+d.id+'&quot;,&quot;24h&quot;)">先开启追踪</button>'}
     <button class="mini-btn" onclick="showTrackStatus('${d.id}')">← 追踪状态</button>
   </div>`;
   document.getElementById('modalContent').innerHTML=html;

@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.5.0 (Atlas)** · 2026-11-17.
+**Self-hosted, auditable fact-checking workspace.** Version **0.5.1 (Atlas)** · 2026-11-17.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -23,8 +23,9 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
 
-## What is new in 0.5.0
+## What is new in 0.5.1
 
+- Fixed a runtime JavaScript syntax error that made dashboard buttons unresponsive after deployment.
 - Four switchable UI templates: **Aurora**, **Paper**, **Slate**, **Terminal**.
 - Top navigation, version chip and a **Version & Updates** dialog.
 - Single source of truth for versioning in `app/version.py`.
