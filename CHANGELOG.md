@@ -1,8 +1,20 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.6.0 (Prism, 2026-11-17)**.
+All notable changes to NewsVerify are documented here. The current version is **0.6.1 (Echo, 2026-11-17)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.6.1 — Echo (2026-11-17)
+
+### Added
+- Ambient sound library expanded from 4 to **20 generative scenes**: white noise, singing bowl, Zen garden, morning birds, thunderstorm, mountain stream, wind chimes, summer crickets, campfire, temple bell, bamboo grove, falling snow and more.
+- A layered Web Audio engine (`noise` / `pad` / `chirp` / `strike`) synthesises every scene locally — no external audio files or network requests.
+
+### Changed
+- Clicking a sound starts it immediately; clicking the playing sound again stops it; clicking another sound switches tracks. The separate play/stop button is still available.
+- The music panel fades out after 5 seconds of inactivity and can also be closed manually; any interaction resets the timer, and fading out never stops playback. Sounds are listed in a scrollable area so all 20 are reachable.
+- Volume now updates live while dragging, with a percentage readout; track and volume preferences remain in `localStorage`.
+- Added rendered-HTML JavaScript syntax validation plus an interaction simulation test covering play / stop / switch / volume.
 
 ## 0.6.0 — Prism (2026-11-17)
 

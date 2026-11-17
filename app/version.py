@@ -6,9 +6,9 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 RELEASE_DATE = "2026-11-17"
-CODENAME = "Prism"
+CODENAME = "Echo"
 
 THEMES = [
     {"key": "aurora", "name": "极光 · Aurora", "description": "深蓝玻璃质感，默认风格"},
@@ -23,6 +23,20 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.6.1",
+        "date": "2026-11-17",
+        "codename": "Echo",
+        "summary": "背景音乐扩展为 20 种声景，点击即播放、再点即停止，面板 5 秒无操作自动淡出",
+        "changes": [
+            "背景音乐从 4 首扩展到 20 种 Web Audio 生成式声景：白噪音、颂钵、佛教庭院、室外鸟叫、雷雨、溪流、风铃、夏夜虫鸣、篝火、寺院钟声、竹林、雪落等",
+            "点击任一声音即直接播放；同一声音再点即停止；播放中点击其他声音自动切换，无需先点播放按钮",
+            "音乐面板 5 秒无操作自动淡出，也可点右上角关闭；任何操作重新计时，淡出只收起面板不中断播放",
+            "音量改为拖动时实时调节并显示百分比，曲目与音量偏好继续保存在本地",
+            "音源引擎重构为 noise / pad / chirp / strike 分层架构，20 种声音全部实时合成，无外部音频依赖",
+            "新增渲染后脚本语法校验与交互行为模拟测试，确保发布版本的播放逻辑可用",
+        ],
+    },
     {
         "version": "0.6.0",
         "date": "2026-11-17",

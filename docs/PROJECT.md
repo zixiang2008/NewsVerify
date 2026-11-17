@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.6.0（Prism） · 文档更新：2026-11-17
+> 软件版本：0.6.1（Echo） · 文档更新：2026-11-17
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.6.0）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.6.1）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -401,3 +401,11 @@ $DOCKER compose logs -f bot worker
 - **IM 接入层**（`app/integrations/`）：`BaseChannel` 抽象 + `TelegramChannel` + `GenericWebhookChannel`，`ChannelRegistry` 配置驱动注册 `CHANNEL_CATALOGUE`（含 11 种主流平台）；统一入口 `POST /api/v1/im/{key}/webhook`，每个平台用 `NV_IM_{KEY}_WEBHOOK` / `NV_IM_{KEY}_SECRET` 配置。设计参考 NoneBot/OneBot 与 Kirara AI 的适配器模式，但不引入其运行时依赖。
 - **后台管理**：独立 PIN 会话 cookie `nv_admin`（PIN `1314`），路由 `/admin`、`/api/admin/config`（密钥脱敏）、`/api/admin/channels`、`/api/admin/channels/{key}/test`。中间件对 `/theory` 与后台登录放行。
 - **理论页**：`app/web/theory.py` 的 `PAGE` 为自包含 HTML，公开访问 `/theory`，含方法论表、频段体系来源、SVG 体系图、逐条引用与学术评价。
+
+### 13.7 v0.6.1：背景声景库与交互重构
+
+- **20 种声景**：`app/web/app.py` 的 `MUSIC_TRACKS` 从 4 首扩展到 20 种，覆盖白噪音、颂钵、佛教庭院、室外鸟叫、细雨、雷雨、溪流、风铃、夏夜虫鸣、篝火、寺院钟声、月光、竹林、雪落等。每项声明 `layers`，由 `nvBuildLayer()` 按 `noise`（随机缓冲 + 双二阶滤波）、`pad`（振荡器 + 缓慢起伏）、`chirp`（随机频率扫描）、`strike`（泛音衰减敲击）四类合成，全部本地实时生成。
+- **点击即播放**：`selectMusic(id)` 中，若当前正在播放同一 id 则 `stopMusic()`，否则 `startMusic(id)`；`startMusic()` 先 `nvDestroyLayers()` 再按新曲目的 layers 重建，因此切换曲目不会叠加声音。顶部按钮仍可打开/收起面板，面板底部保留统一播放/停止按钮。
+- **5 秒自动淡出**：`.music-panel` 使用 `opacity + transform + transition`，`openMusicPanel()` 先设 `display:block` 再于下一帧加 `.show`，`closeMusicPanel()` 加 `.hide` 后 360ms 才 `display:none`；`resetMusicPanelHideTimer()` 由面板上的 `click/mousemove/input/wheel/touchstart` 事件重置，5 秒无操作触发淡出。淡出仅隐藏面板，`nvMusicOn` 不变，播放继续。
+- **音量实时化**：`<input type=range oninput=...>` 替代原 `onchange`，`setMusicVolume()` 用 `setTargetAtTime` 平滑改主增益并显示百分比；曲目与音量分别持久化到 `nv_music_track` / `nv_music_vol`。
+- **验证方式**：`ast` 提取 HTML 字面量 → 正则取 `<script>` → `node --check` 校验运行时脚本；另用 mock DOM/Web Audio 的 Node 脚本实测播放、停止、切换、音量、面板淡出逻辑。

@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.6.0 (Prism) · **Release date:** 2026-11-17  
+**Version:** 0.6.1 (Echo) · **Release date:** 2026-11-17  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -222,6 +222,14 @@ For every release:
 - **Multi-IM access** (`app/integrations/`): following the adapter + config-driven + unified-entry pattern of mature frameworks (NoneBot/OneBot, Kirara AI), adapters for Telegram, Discord, Slack, Feishu, DingTalk, WeCom, WeChat OA, QQ/OneBot, LINE, Matrix and generic webhooks; unified entry `POST /api/v1/im/{key}/webhook`.
 - **Admin console** `/admin` (PIN `1314`): view masked API config, channel status and send test replies; `.env` changes require a container restart.
 - **Theory page** `/theory`: public page with methodology, credibility-band origins, an SVG system diagram, itemised citations and academic/global assessment.
+
+## 7.6 New in v0.6.1 — ambient sound library
+
+- **20 generative soundscapes** (up from 4): white noise, singing bowl, Zen garden, outdoor birds, gentle rain, thunderstorm, mountain stream, wind chimes, summer crickets, campfire, temple bell, moonlight, bamboo grove, falling snow and more. Each track is composed of one or more `noise` / `pad` / `chirp` / `strike` layers synthesised in real time with Web Audio — no external audio files and no network requests.
+- **Interaction**: clicking a sound starts it immediately; clicking the playing sound again stops it; clicking another sound switches to it. The list is scrollable so all 20 are reachable, and the play/stop button remains at the bottom of the panel.
+- **Auto-hide**: the panel fades out after 5 seconds without interaction and can also be closed with the × button. Any click, mouse move, drag or wheel event restarts the timer. Fading out only collapses the panel — playback continues.
+- **Volume**: the range input uses `oninput`, so changes apply while dragging, with a percentage readout. The selected track and volume persist in `localStorage` (`nv_music_track`, `nv_music_vol`).
+- **Verification**: rendered-HTML JavaScript syntax validation (`ast` + `node --check`) and an interaction simulation test (play / stop / switch / volume) run before release.
 
 ---
 

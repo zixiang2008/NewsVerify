@@ -910,15 +910,20 @@ h1{font-size:24px;font-weight:700}
 .music-btn:hover{border-color:var(--accent);color:var(--accent)}
 .music-btn.playing{border-color:var(--accent3);color:var(--ok-text)}
 .music-note{font-size:13px}
-.music-panel{position:fixed;right:20px;bottom:20px;z-index:55;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:var(--shadow);width:min(320px,92vw);display:none}
-.music-panel h3{font-size:14px;color:var(--accent);margin-bottom:4px}
+.music-panel{position:fixed;right:20px;bottom:20px;z-index:55;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:var(--shadow);width:min(360px,92vw);display:none;opacity:0;transform:translateY(14px);transition:opacity .32s ease,transform .32s ease}
+.music-panel.show{opacity:1;transform:translateY(0)}
+.music-panel.hide{opacity:0;transform:translateY(14px);pointer-events:none}
+.music-panel h3{font-size:14px;color:var(--accent);margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.music-close{border:1px solid var(--border);background:var(--surface-1);color:var(--muted);border-radius:8px;width:26px;height:26px;line-height:1;cursor:pointer;font-size:16px;transition:all .15s}
+.music-close:hover{color:var(--danger);border-color:var(--danger)}
+.music-list{max-height:min(54vh,430px);overflow-y:auto;overflow-x:hidden;padding-right:6px;scrollbar-width:thin;scrollbar-color:var(--accent) var(--surface-2)}
 .music-track{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;border-radius:10px;border:1px solid var(--border);background:var(--surface-0);margin-top:7px;cursor:pointer;font-size:12px;transition:all .15s}
 .music-track:hover{border-color:var(--accent)}
 .music-track.active{border-color:var(--accent3);background:var(--reported-bg)}
 .music-track .mt-title{font-weight:700;color:var(--text)}
 .music-track .mt-desc{font-size:10px;color:var(--muted);margin-top:2px}
 .music-track .mt-icon{font-size:16px}
-.music-row{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:11px;color:var(--muted)}
+.music-row{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px}
 .music-row input[type=range]{flex:1;accent-color:var(--accent)}
 .nav{display:flex;gap:6px;flex-wrap:wrap;margin:-6px 0 18px;padding:6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-1);box-shadow:var(--shadow)}
 .nav a{color:var(--muted);text-decoration:none;font-size:12px;padding:6px 12px;border-radius:8px;transition:all .15s}
@@ -1358,12 +1363,13 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
 <!-- 背景音乐面板 -->
 <div class="music-panel" id="musicPanel">
-  <h3>🎵 背景音乐 <span class="note" style="float:right;margin:0">安静 · 放松</span></h3>
-  <div class="note" style="margin:2px 0 8px">生成式氛围音，无需联网加载音频，可随时开启或切换。</div>
-  <div id="musicTracks"></div>
+  <h3><span>🎵 背景音乐 · 声景库</span><button class="music-close" onclick="closeMusicPanel()" title="关闭面板">×</button></h3>
+  <div class="note" style="margin:2px 0 8px">点一下即播放，再点一下停止 · 5 秒无操作自动收起</div>
+  <div class="music-list" id="musicTracks"></div>
   <div class="music-row">
     <button class="mini-btn" onclick="toggleMusic()" id="musicToggleBtn">▶ 播放</button>
-    <span>音量</span><input type="range" min="0" max="100" value="50" onchange="setMusicVolume(this.value)" />
+    <span>音量</span><input type="range" id="musicVol" min="0" max="100" value="50" oninput="setMusicVolume(this.value)" />
+    <span id="musicVolLabel">50%</span>
   </div>
 </div>
 
@@ -1402,79 +1408,217 @@ function applyTheme(key){
   document.documentElement.setAttribute('data-theme',saved);
   setTimeout(()=>{const sel=document.getElementById('themeSelect'); if(sel) sel.value=saved;},0);
 })();
-/* ==== v0.6.0 背景音乐：Web Audio 生成式氛围音，可开关/可切换曲目 ==== */
+/* ==== v0.6.1 背景音乐：20 种 Web Audio 生成式声景，点击即播放 / 再点即停止 / 5 秒无操作自动淡出 ==== */
 const MUSIC_TRACKS=[
-  {id:'rain',title:'细雨 · Gentle Rain',desc:'轻柔音景，专注放松',icon:'🌧️',freq:[420,620,880],gain:0.028,wave:'sine'},
-  {id:'waves',title:'海浪 · Ocean Waves',desc:'缓慢起伏，平稳呼吸',icon:'🌊',freq:[110,165,220],gain:0.045,wave:'sine'},
-  {id:'forest',title:'森林 · Forest Calm',desc:'空灵和声，宁静自然',icon:'🌲',freq:[261,329,392],gain:0.026,wave:'triangle'},
-  {id:'night',title:'夜曲 · Night Breeze',desc:'低频暖垫，助眠静心',icon:'🌙',freq:[196,246,294],gain:0.03,wave:'sine'},
+  {id:'rain',title:'细雨',en:'Gentle Rain',desc:'柔和雨幕，专注放松',icon:'🌧️',layers:[{kind:'noise',filter:'lowpass',cutoff:1100,gain:0.055,swell:0.15}]},
+  {id:'waves',title:'海浪',en:'Ocean Waves',desc:'潮汐起伏，平稳呼吸',icon:'🌊',layers:[{kind:'noise',filter:'lowpass',cutoff:520,gain:0.09,swell:0.75,swellRate:0.16}]},
+  {id:'forest',title:'森林',en:'Forest Calm',desc:'空灵和声，宁静自然',icon:'🌲',layers:[{kind:'pad',freq:[261,329,392],wave:'triangle',gain:0.03,swell:0.5}]},
+  {id:'night',title:'夜曲',en:'Night Breeze',desc:'低频暖垫，助眠静心',icon:'🌙',layers:[{kind:'pad',freq:[196,246,294],wave:'sine',gain:0.038,swell:0.6}]},
+  {id:'whitenoise',title:'白噪音',en:'White Noise',desc:'均匀频谱，遮蔽杂音',icon:'🌫️',layers:[{kind:'noise',gain:0.022}]},
+  {id:'bowl',title:'颂钵',en:'Singing Bowl',desc:'泛音轻击，冥想静心',icon:'🪔',layers:[{kind:'strike',freq:[220,440,653,880],gain:0.06,interval:5200,decay:5.5}]},
+  {id:'zen',title:'佛教庭院',en:'Zen Garden',desc:'钟磬与庭鸟，禅意空间',icon:'⛩️',layers:[{kind:'strike',freq:[174,348,523],gain:0.05,interval:6800,decay:6},{kind:'chirp',freq:[1200,1800],gain:0.012,interval:2600}]},
+  {id:'birds',title:'室外鸟叫',en:'Morning Birds',desc:'晨间啁啾，清新自然',icon:'🐦',layers:[{kind:'chirp',freq:[1400,2300],gain:0.02,interval:1000}]},
+  {id:'thunder',title:'雷雨',en:'Thunder Rain',desc:'雨幕低雷，沉稳安心',icon:'⛈️',layers:[{kind:'noise',filter:'lowpass',cutoff:700,gain:0.07,swell:0.3},{kind:'strike',freq:[55,82],gain:0.045,interval:11000,decay:3}]},
+  {id:'stream',title:'溪流',en:'Mountain Stream',desc:'山涧流水，清透灵动',icon:'🏞️',layers:[{kind:'noise',filter:'bandpass',cutoff:1800,q:0.7,gain:0.06,swell:0.2}]},
+  {id:'chimes',title:'风铃',en:'Wind Chimes',desc:'随风轻响，清脆空灵',icon:'🎐',layers:[{kind:'strike',freq:[880,1320,1760],gain:0.035,interval:3000,decay:2.4}]},
+  {id:'crickets',title:'夏夜虫鸣',en:'Summer Crickets',desc:'草间细鸣，乡野夜色',icon:'🦗',layers:[{kind:'chirp',freq:[3800,4600],gain:0.014,interval:700,burst:3}]},
+  {id:'fire',title:'篝火',en:'Campfire',desc:'木柴噼啪，温暖休憩',icon:'🔥',layers:[{kind:'noise',filter:'lowpass',cutoff:1600,gain:0.035,swell:0.25}]},
+  {id:'deep',title:'深海',en:'Deep Ocean',desc:'极低频垫，沉浸放空',icon:'🐋',layers:[{kind:'pad',freq:[55,82,110],wave:'sine',gain:0.05,swell:0.7,rate:0.05}]},
+  {id:'mist',title:'晨雾',en:'Morning Mist',desc:'薄雾和声，柔和舒展',icon:'🌅',layers:[{kind:'pad',freq:[293,369,440],wave:'sine',gain:0.028,swell:0.5}]},
+  {id:'leaves',title:'雨打芭蕉',en:'Rain on Leaves',desc:'叶面雨滴，细腻清脆',icon:'🍃',layers:[{kind:'noise',filter:'bandpass',cutoff:2600,q:1.2,gain:0.05,swell:0.2}]},
+  {id:'bell',title:'寺院钟声',en:'Temple Bell',desc:'悠远钟鸣，庄严宁静',icon:'🔔',layers:[{kind:'strike',freq:[110,220,330,440],gain:0.055,interval:9000,decay:8}]},
+  {id:'moon',title:'月光',en:'Moonlight',desc:'空灵长音，夜色温柔',icon:'🌕',layers:[{kind:'pad',freq:[220,277,330,415],wave:'sine',gain:0.024,swell:0.55,rate:0.07}]},
+  {id:'bamboo',title:'竹林',en:'Bamboo Grove',desc:'风过竹叶，偶有鸟语',icon:'🎋',layers:[{kind:'noise',filter:'bandpass',cutoff:2200,q:0.6,gain:0.04,swell:0.5},{kind:'chirp',freq:[1600,2400],gain:0.012,interval:4200}]},
+  {id:'snow',title:'雪落',en:'Falling Snow',desc:'极轻高频，安静入睡',icon:'❄️',layers:[{kind:'noise',filter:'highpass',cutoff:4200,gain:0.022,swell:0.25}]},
 ];
-let nvAudioCtx=null,nvMusicNodes=[],nvMusicTimer=null,nvMusicOn=false,nvCurrentTrack='rain',nvMusicVol=0.5;
-function toggleMusicPanel(){
-  const p=document.getElementById('musicPanel');
-  p.style.display=(p.style.display==='block')?'none':'block';
-  if(p.style.display==='block') renderMusicTracks();
+let nvAudioCtx=null,nvLayers=[],nvMusicOn=false,nvCurrentTrack='rain',nvMusicVol=0.5,nvMusicHideTimer=null;
+function nvEnsureAudio(){
+  if(!nvAudioCtx){
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) throw new Error('Web Audio unavailable');
+    nvAudioCtx=new AC();
+    const master=nvAudioCtx.createGain(); master.gain.value=nvMusicVol; master.connect(nvAudioCtx.destination);
+    nvAudioCtx._master=master;
+  }
+  if(nvAudioCtx.state==='suspended') nvAudioCtx.resume();
+  return nvAudioCtx;
+}
+function nvBuildLayer(layer){
+  const ctx=nvAudioCtx,master=ctx._master;
+  const bus=ctx.createGain(); bus.gain.value=layer.gain; bus.connect(master);
+  const h={bus:bus,nodes:[],timers:[]};
+  if(layer.kind==='noise'){
+    const len=Math.floor(ctx.sampleRate*3);
+    const buf=ctx.createBuffer(1,len,ctx.sampleRate);
+    const data=buf.getChannelData(0);
+    for(let i=0;i<len;i++) data[i]=Math.random()*2-1;
+    const src=ctx.createBufferSource(); src.buffer=buf; src.loop=true;
+    let tail=src;
+    if(layer.filter){
+      const f=ctx.createBiquadFilter(); f.type=layer.filter; f.frequency.value=layer.cutoff||1000;
+      if(layer.q) f.Q.value=layer.q;
+      src.connect(f); tail=f; h.nodes.push(f);
+    }
+    tail.connect(bus); src.start(); h.nodes.push(src);
+    if(layer.swell){
+      let ph=Math.random()*6.28;
+      const rate=layer.swellRate||0.12;
+      const timer=setInterval(()=>{
+        ph+=rate;
+        const env=1-layer.swell+layer.swell*(0.5+0.5*Math.sin(ph));
+        bus.gain.setTargetAtTime(layer.gain*env,ctx.currentTime,0.7);
+      },1200);
+      h.timers.push(timer);
+    }
+  }else if(layer.kind==='pad'){
+    (layer.freq||[220]).forEach((f,i)=>{
+      const osc=ctx.createOscillator(); osc.type=layer.wave||'sine'; osc.frequency.value=f;
+      const g=ctx.createGain(); g.gain.value=0.0001;
+      osc.connect(g); g.connect(bus); osc.start();
+      h.nodes.push(osc); h.nodes.push(g);
+      g.gain.setTargetAtTime(layer.gain*0.7,ctx.currentTime,1.2);
+      let ph=Math.random()*6.28;
+      const rate=layer.rate||0.1;
+      const timer=setInterval(()=>{
+        ph+=rate;
+        const env=0.42+0.58*(0.5+0.5*Math.sin(ph+i*0.7));
+        g.gain.setTargetAtTime(layer.gain*env,ctx.currentTime,1.2);
+      },1400);
+      h.timers.push(timer);
+    });
+  }else if(layer.kind==='chirp'){
+    const beat=()=>{
+      const now=ctx.currentTime;
+      const base=(layer.freq||[1600])[0]*(0.85+Math.random()*0.3);
+      const osc=ctx.createOscillator(); osc.type='sine';
+      const g=ctx.createGain();
+      osc.frequency.setValueAtTime(base,now);
+      osc.frequency.exponentialRampToValueAtTime(base*(1.25+Math.random()*0.35),now+0.07);
+      osc.frequency.exponentialRampToValueAtTime(base*0.8,now+0.19);
+      const peak=layer.gain*(0.6+Math.random()*0.8);
+      g.gain.setValueAtTime(0.0001,now);
+      g.gain.exponentialRampToValueAtTime(peak,now+0.025);
+      g.gain.exponentialRampToValueAtTime(0.0001,now+0.24);
+      osc.connect(g); g.connect(bus); osc.start(now); osc.stop(now+0.26);
+    };
+    const burst=layer.burst||1;
+    const timer=setInterval(()=>{for(let k=0;k<burst;k++) setTimeout(beat,k*90);},layer.interval||1200);
+    h.timers.push(timer);
+    setTimeout(beat,300);
+  }else if(layer.kind==='strike'){
+    const beat=()=>{
+      const now=ctx.currentTime;
+      (layer.freq||[220]).forEach((f,i)=>{
+        const osc=ctx.createOscillator(); osc.type=layer.wave||'sine';
+        osc.frequency.value=f*(1+(Math.random()-0.5)*0.004);
+        const g=ctx.createGain();
+        const a=layer.gain/(i+1.2),dec=layer.decay||4;
+        g.gain.setValueAtTime(0.0001,now);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002,a),now+0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001,now+dec);
+        osc.connect(g); g.connect(bus); osc.start(now); osc.stop(now+dec+0.1);
+      });
+    };
+    const timer=setInterval(beat,layer.interval||6000);
+    h.timers.push(timer);
+    beat();
+  }
+  return h;
+}
+function nvDestroyLayers(){
+  nvLayers.forEach(h=>{
+    h.timers.forEach(t=>clearInterval(t));
+    h.nodes.forEach(n=>{try{if(n.stop)n.stop();}catch(e){}try{n.disconnect();}catch(e){}});
+    try{h.bus.disconnect();}catch(e){}
+  });
+  nvLayers=[];
+}
+function updateMusicUI(){
+  const btn=document.getElementById('musicBtn'); if(btn) btn.classList.toggle('playing',nvMusicOn);
+  const lbl=document.getElementById('musicLabel'); if(lbl) lbl.textContent=nvMusicOn?'播放中':'音乐';
+  const tb=document.getElementById('musicToggleBtn'); if(tb) tb.textContent=nvMusicOn?'⏸ 停止':'▶ 播放';
 }
 function renderMusicTracks(){
   const box=document.getElementById('musicTracks'); if(!box) return;
-  box.innerHTML=MUSIC_TRACKS.map(t=>
-    `<div class="music-track ${t.id===nvCurrentTrack?'active':''}" onclick="selectMusic('${t.id}')">
-       <div><div class="mt-title">${t.icon} ${t.title}</div><div class="mt-desc">${t.desc}</div></div>
-       <span class="mt-icon">${t.id===nvCurrentTrack&&nvMusicOn?'🔊':'▶'}</span>
-     </div>`).join('');
+  box.innerHTML=MUSIC_TRACKS.map(t=>{
+    const playing=nvMusicOn&&t.id===nvCurrentTrack;
+    return `<div class="music-track ${playing?'active':''}" onclick="selectMusic('${t.id}')" title="${playing?'再点一下停止':'点击播放'}">
+       <div><div class="mt-title">${t.icon} ${t.title}<span style="font-weight:400;opacity:.55"> · ${t.en}</span></div><div class="mt-desc">${t.desc}</div></div>
+       <span class="mt-icon">${playing?'🔊':'▶'}</span>
+     </div>`;
+  }).join('');
 }
 function selectMusic(id){
-  nvCurrentTrack=id;
-  try{localStorage.setItem('nv_music_track',id);}catch(e){}
-  if(nvMusicOn) startMusic(); else renderMusicTracks();
+  if(nvMusicOn&&nvCurrentTrack===id) stopMusic(); else startMusic(id);
+  resetMusicPanelHideTimer();
 }
-function setMusicVolume(v){
-  nvMusicVol=Number(v)/100;
-  if(nvAudioCtx&&nvAudioCtx._master) nvAudioCtx._master.gain.value=nvMusicVol;
-  try{localStorage.setItem('nv_music_vol',String(v));}catch(e){}
-}
-function stopMusic(){
-  if(nvMusicTimer){clearInterval(nvMusicTimer);nvMusicTimer=null;}
-  nvMusicNodes.forEach(n=>{try{n.osc.stop();}catch(e){}try{n.osc.disconnect();}catch(e){}});
-  nvMusicNodes=[]; nvMusicOn=false;
-  const btn=document.getElementById('musicBtn'); if(btn) btn.classList.remove('playing');
-  const lbl=document.getElementById('musicLabel'); if(lbl) lbl.textContent='音乐';
-  const tb=document.getElementById('musicToggleBtn'); if(tb) tb.textContent='▶ 播放';
-  renderMusicTracks();
-}
-function startMusic(){
+function startMusic(id){
   try{
-    if(!nvAudioCtx){
-      nvAudioCtx=new (window.AudioContext||window.webkitAudioContext)();
-      const master=nvAudioCtx.createGain(); master.gain.value=nvMusicVol; master.connect(nvAudioCtx.destination);
-      nvAudioCtx._master=master;
+    nvEnsureAudio();
+    nvDestroyLayers();
+    if(id&&MUSIC_TRACKS.some(x=>x.id===id)){
+      nvCurrentTrack=id;
+      try{localStorage.setItem('nv_music_track',id);}catch(e){}
     }
-    if(nvAudioCtx.state==='suspended') nvAudioCtx.resume();
-    nvMusicNodes.forEach(n=>{try{n.osc.stop();}catch(e){}}); nvMusicNodes=[];
     const t=MUSIC_TRACKS.find(x=>x.id===nvCurrentTrack)||MUSIC_TRACKS[0];
-    t.freq.forEach((f,i)=>{
-      const osc=nvAudioCtx.createOscillator(); osc.type=t.wave; osc.frequency.value=f;
-      const g=nvAudioCtx.createGain(); g.gain.value=0; osc.connect(g); g.connect(nvAudioCtx._master);
-      osc.start();
-      const phase=Math.random()*Math.PI*2;
-      const tick=()=>{const now=nvAudioCtx.currentTime;const env=(0.5+0.5*Math.sin(now*(0.12+i*0.025)+phase));g.gain.setTargetAtTime(t.gain*env,now,0.9);};
-      tick(); nvMusicNodes.push({osc,g});
-    });
-    if(nvMusicTimer) clearInterval(nvMusicTimer);
-    nvMusicTimer=setInterval(()=>{const now=nvAudioCtx.currentTime;nvMusicNodes.forEach((n,i)=>{const env=(0.5+0.5*Math.sin(now*(0.12+i*0.025)+i));n.g.gain.setTargetAtTime(t.gain*env,now,0.9);});},1500);
+    t.layers.forEach(l=>nvLayers.push(nvBuildLayer(l)));
     nvMusicOn=true;
-    const btn=document.getElementById('musicBtn'); if(btn) btn.classList.add('playing');
-    const lbl=document.getElementById('musicLabel'); if(lbl) lbl.textContent='播放中';
-    const tb=document.getElementById('musicToggleBtn'); if(tb) tb.textContent='⏸ 停止';
-    renderMusicTracks();
+    updateMusicUI(); renderMusicTracks();
   }catch(e){ console.warn('music start failed',e); }
 }
-function toggleMusic(){ if(nvMusicOn){stopMusic();}else{startMusic();} }
+function stopMusic(){
+  nvDestroyLayers();
+  nvMusicOn=false;
+  updateMusicUI(); renderMusicTracks();
+}
+function setMusicVolume(v){
+  nvMusicVol=Math.max(0,Math.min(1,Number(v)/100));
+  if(nvAudioCtx&&nvAudioCtx._master) nvAudioCtx._master.gain.setTargetAtTime(nvMusicVol,nvAudioCtx.currentTime,0.05);
+  const lbl=document.getElementById('musicVolLabel'); if(lbl) lbl.textContent=Math.round(nvMusicVol*100)+'%';
+  try{localStorage.setItem('nv_music_vol',String(Math.round(nvMusicVol*100)));}catch(e){}
+  resetMusicPanelHideTimer();
+}
+function toggleMusic(){
+  if(nvMusicOn) stopMusic(); else startMusic();
+  resetMusicPanelHideTimer();
+}
+function openMusicPanel(){
+  const p=document.getElementById('musicPanel'); if(!p) return;
+  if(nvMusicHideTimer){clearTimeout(nvMusicHideTimer);nvMusicHideTimer=null;}
+  p.classList.remove('hide');
+  p.style.display='block';
+  void p.offsetWidth;
+  p.classList.add('show');
+  const vol=document.getElementById('musicVol'); if(vol) vol.value=Math.round(nvMusicVol*100);
+  const lbl=document.getElementById('musicVolLabel'); if(lbl) lbl.textContent=Math.round(nvMusicVol*100)+'%';
+  renderMusicTracks();
+  resetMusicPanelHideTimer();
+}
+function closeMusicPanel(){
+  const p=document.getElementById('musicPanel'); if(!p||p.style.display==='none') return;
+  if(nvMusicHideTimer){clearTimeout(nvMusicHideTimer);nvMusicHideTimer=null;}
+  p.classList.remove('show'); p.classList.add('hide');
+  setTimeout(()=>{if(p.classList.contains('hide')) p.style.display='none';},360);
+}
+function resetMusicPanelHideTimer(){
+  if(nvMusicHideTimer) clearTimeout(nvMusicHideTimer);
+  nvMusicHideTimer=setTimeout(closeMusicPanel,5000);
+}
+function toggleMusicPanel(){
+  const p=document.getElementById('musicPanel');
+  if(p&&p.style.display==='block'&&!p.classList.contains('hide')) closeMusicPanel(); else openMusicPanel();
+}
 (function initMusic(){
   try{
     const t=localStorage.getItem('nv_music_track'); if(t&&MUSIC_TRACKS.some(x=>x.id===t)) nvCurrentTrack=t;
-    const v=localStorage.getItem('nv_music_vol'); if(v!=null) nvMusicVol=Number(v)/100;
+    const v=localStorage.getItem('nv_music_vol'); if(v!=null) nvMusicVol=Math.max(0,Math.min(1,Number(v)/100));
   }catch(e){}
+  setTimeout(()=>{
+    const p=document.getElementById('musicPanel');
+    if(p) ['click','mousemove','input','wheel','touchstart'].forEach(ev=>p.addEventListener(ev,resetMusicPanelHideTimer,{passive:true}));
+    const vol=document.getElementById('musicVol'); if(vol) vol.value=Math.round(nvMusicVol*100);
+    const lbl=document.getElementById('musicVolLabel'); if(lbl) lbl.textContent=Math.round(nvMusicVol*100)+'%';
+  },0);
 })();
 async function showVersion(){
   const modalBg=document.getElementById('modalBg');

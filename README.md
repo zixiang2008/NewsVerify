@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.6.0 (Prism)** · 2026-11-17.
+**Self-hosted, auditable fact-checking workspace.** Version **0.6.1 (Echo)** · 2026-11-17.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -22,6 +22,12 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | English | Six systems and verdict rules |
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
+
+## What is new in 0.6.1
+
+- **20-scene ambient sound library** (up from 4): white noise, singing bowl, Zen garden, outdoor birds, rain, thunderstorms, streams, wind chimes, crickets, campfire, temple bell, bamboo grove, falling snow and more — all synthesised locally with Web Audio, no external audio files.
+- **Click to play**: click a sound to start it, click it again to stop, or click another one to switch. Volume adjusts live while dragging, with a percentage readout.
+- The player panel **fades out after 5 seconds of inactivity**, can be closed manually, and fading out never interrupts playback. All 20 sounds are reachable via a scrollable list.
 
 ## What is new in 0.6.0
 
