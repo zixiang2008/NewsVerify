@@ -14,6 +14,7 @@ The single source of truth for the version is [`app/version.py`](app/version.py)
 - Compliant open-web collector (`app/ingest/open_web.py`): public Google News RSS + custom feeds, robots.txt checks, polite rate limiting, bounded retries — all results still pass the trusted-source whitelist.
 - Public theory page `/theory` (`app/web/theory.py`) covering methodology, credibility-band origins, a full SVG system diagram, itemised citations and academic/global assessment.
 - Permanent scrollbar on the Top 30 media panel; each evidence item now shows a bracketed tag with outlet, global credibility rank, factual grade and report date.
+- Evidence collection now skips search-engine domains as evidence (they are discovery entry points only) and adds `site:` queries against leading credible media to keep the evidence pool populated with real outlet articles.
 
 ### Changed
 - System topology diagram now depicts one generic "instant messengers (incl. Telegram)" entry point instead of a single IM.
