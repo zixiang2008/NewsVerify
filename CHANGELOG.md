@@ -1,8 +1,15 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.7.0 (Bridge, 2026-11-17)**.
+All notable changes to NewsVerify are documented here. The current version is **0.7.1 (Source, 2026-11-18)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.7.1 — Source (2026-11-18)
+
+- Rebuilt the public `/theory` page: added a four-layer "how to judge a news story's truth" overview (philosophy / cognition / method / institutions) and a theory-to-implementation mapping table showing exactly which theory powers which part of the system.
+- All in-text citations are now numbered `[1]`–`[17]` and link to a full source-notes section listing the original URLs (arXiv / ACL Anthology / DOI / official pages, all sources where multiple exist), the earliest publishing institution, year, and the theoretical basis of each source.
+- Fixed incorrect paper references in the old page: FEVER → arXiv:1803.05355 (NAACL 2018), AVeriTeC → arXiv:2305.13117 (NeurIPS 2023), trafilatura → ACL 2021.acl-demo.15.
+- Redrew the system diagram as five layers (theory → method → rating studies → pipeline → output) with citation numbers on each node.
 
 ## 0.7.0 — Bridge (2026-11-17)
 

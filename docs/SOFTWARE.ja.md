@@ -1,6 +1,6 @@
 # NewsVerify ソフトウェア仕様書
 
-**バージョン：** 0.7.0（Bridge） · **リリース日：** 2026-11-17  
+**バージョン：** 0.7.1（Source） · **リリース日：** 2026-11-18  
 **リポジトリ：** https://github.com/zixiang2008/NewsVerify  
 **公開コンソール：** https://new.caishen.today（LAN：`http://192.168.8.253:8095`）
 
@@ -239,6 +239,15 @@ curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
 - **QR 連携**：Telegram は `segno` で `t.me/<bot>?start` の SVG QR を生成し、スキャン後に `/start` を送ると統一 webhook が `bound_chat_id` を記録、ウィザードが `/bind-status` をポーリングして完了を表示します。飛書/釘釘/WeCom/LINE/QQ OneBot は各公式スキャン手順が異なるため、公式案内と受信 URL のワンクリックコピーを提供します。
 - **実テスト**：`app/integrations/__init__.py` が各プラットフォーム公式形式のメッセージ（飛書 `msg_type:text`＋タイムスタンプ署名、釘釘 `msgtype:text`＋HMAC-SHA256 署名、WeCom、Discord `content`、Slack `text`、LINE `messages`、Matrix `m.text`、Telegram Bot API）を構築し、結果とエラーを状態パネルへ書き戻します。
 - **検証**：15 項目の接続ロジックテスト（ガイド完全性、マスキング/マージ、各プラットフォーム形式と署名、未設定時の安全失敗、QR 生成）と、レンダリング後 JS の `node --check` を実施。
+
+## 7.8 v0.7.1 の新機能：理論ページの引用体系と出典検証
+
+- **内容**：`app/web/theory.py` を理論解説ページへ全面拡張。八章構成（なぜ枠組みが必要か、ニュース真偽判断の理論全景、理論と実装の対応、方法論、信頼度バンドの由来、体系図、学術評価、出典注釈）。
+- **理論全景**：ニュースの真偽を判断する研究を四層に整理——哲学層（対応説/整合説/検証主義の真理論）、認知層（情報源信頼性、確認バイアス）、手法層（FEVER / AVeriTeC / Veracity / trafilatura）、機関層（MBFC / Ad Fontes / NewsGuard / AllSides / ロイター研究所）。
+- **対応表**：各理論がシステムのどこに使われ、どう組み合わさるかを「哲学→出力形態、認知→バイアス対策、手法→再現可能な工程、機関→情報源序列」の鎖として明示。
+- **出典注釈**：本文の `[1]`–`[17]` 番号引用が末尾へジャンプ。各項目に原文URL（arXiv / ACL Anthology / DOI / 公式ページ、複数ある場合はすべて）、初版発表機関、年、理論的根拠とシステム用途を記載。異なる原文URLは計 27 件。
+- **出典検証**：旧ページの誤引用を修正——FEVER は arXiv:1803.05355（NAACL 2018）、AVeriTeC は arXiv:2305.13117（NeurIPS 2023）、trafilatura は ACL 2021.acl-demo.15。Hovland & Weiss 1951（DOI 10.1086/266350、イェール大）、Nickerson 1998（DOI 10.1037/1089-2680.2.2.175、タフツ大）、スタンフォード哲学百科 "Truth" 項目などの基礎資料を追加。
+- **検証**：`py_compile` 成功、本文引用番号と注釈番号が完全一致（1–17）、HTML タグ閉合チェックすべて通過、誤った arXiv 番号の残存なし。
 
 ---
 

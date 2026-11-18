@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.7.0（Bridge） · 文档更新：2026-11-17
+> 软件版本：0.7.1（Source） · 文档更新：2026-11-18
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.7.0）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.7.1）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -420,3 +420,12 @@ $DOCKER compose logs -f bot worker
 - **平台消息格式**：`GenericWebhookChannel._payload()` 按平台构造官方消息体，飞书/钉钉实现时间戳与 HMAC-SHA256 加签；`TelegramChannel` 从凭证读 Token 与允许用户 ID。
 - **扫码**：`/qrcode` 用 segno 生成 SVG（Telegram `t.me/<bot>` 深链，其它平台跳官方配置台）；入站 webhook 收到 Telegram `/start` 时写 `bound_chat_id`，`/bind-status` 供向导轮询。
 - **验证**：15 项逻辑测试 + 前后端 JS `node --check` 通过；新增 segno 依赖。
+
+### 13.9 v0.7.1：理论页引用体系与出处核实
+
+- **需求**：用户要求理论页所有引用贴出原文地址（多来源全列）、标注学术研究最早发表机构与理论依据，新增「如何看待新闻真实性有哪些理论、系统用了哪部分、如何结合」的总体说明。
+- **出处核实**（关键）：旧页引用的 arXiv 号大面积错误——FEVER 写成 1803.01155（实为近场光学论文）、AVeriTeC 写成 2406.19263（实为 GUI 论文）、trafilatura 写成 2101.00790（实为信息论论文）。逐一 WebFetch 核实后改为：FEVER arXiv:1803.05355（NAACL 2018，ACL）、AVeriTeC arXiv:2305.13117（NeurIPS 2023 D&B）、trafilatura ACL Anthology 2021.acl-demo.15（DOI 10.18653/v1/2021.acl-demo.15）。
+- **新增来源**：Hovland & Weiss 1951 信源可信度（Public Opinion Quarterly 15(4):635–650，DOI 10.1086/266350，耶鲁）、Nickerson 1998 确认偏误（Review of General Psychology 2(2):175–220，DOI 10.1037/1089-2680.2.2.175，Tufts）、斯坦福哲学百科 Truth 条目（Glanzberg，Stanford，2006/2025）；机构页 MBFC / NewsGuard / Ad Fontes / AllSides / 路透研究院 DNR / PolitiFact / FactCheck.org / Full Fact / Google Fact Check Tools。
+- **页面结构**：`app/web/theory.py` 的 `PAGE` 扩为八章，新增「真实性理论全景」（哲学/认知/方法/机构四层）与「理论与实现映射」表；正文 `[1]`–`[17]` 编号引用可跳转文末「引用源注释」，每条含原文地址、最早发表机构、年份、理论依据、系统用途。
+- **体系图**：SVG 重绘为五层（理论依据→核查方法→评级研究→系统流水线→输出评价），节点标注引用编号。
+- **验证**：`py_compile` 通过；正文引用与文末注释编号 1–17 完全一致；8 个 section / 27 条外链 / 26 个 li 标签闭合检查通过；旧错误 arXiv 号无残留。

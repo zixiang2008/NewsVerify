@@ -6,9 +6,9 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.7.0"
-RELEASE_DATE = "2026-11-17"
-CODENAME = "Bridge"
+VERSION = "0.7.1"
+RELEASE_DATE = "2026-11-18"
+CODENAME = "Source"
 
 THEMES = [
     {"key": "aurora", "name": "极光 · Aurora", "description": "深蓝玻璃质感，默认风格"},
@@ -23,6 +23,20 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.7.1",
+        "date": "2026-11-18",
+        "codename": "Source",
+        "summary": "理论页 /theory 全面重做：新增新闻真实性理论全景与系统映射，所有引用附原文地址、最早发表机构与理论依据，并修正错误的论文出处",
+        "changes": [
+            "新增「如何判断一条新闻的真实性」理论全景：哲学层（真理理论）、认知层（信源可信度、确认偏误）、方法层（FEVER/AVeriTeC/Veracity/trafilatura）、机构层（MBFC/Ad Fontes/NewsGuard/AllSides/路透研究院）",
+            "新增「理论与实现映射」表：逐项说明每条理论用在本系统哪一部分、如何组合成完整链路",
+            "正文全部改为 [1]–[17] 编号引用，可点击跳转到末尾的引用源注释",
+            "引用源注释逐条给出原文地址（arXiv/ACL/DOI/官方页，多来源全部列出）、最早发表机构、年份与理论依据",
+            "修正旧版错误出处：FEVER 由错误的光学论文号改为 arXiv:1803.05355（NAACL 2018），AVeriTeC 改为 arXiv:2305.13117（NeurIPS 2023），trafilatura 改为 ACL 2021.acl-demo.15",
+            "体系图重绘为五层结构（理论→方法→评级→流水线→输出），节点标注对应引用编号",
+        ],
+    },
     {
         "version": "0.7.0",
         "date": "2026-11-17",

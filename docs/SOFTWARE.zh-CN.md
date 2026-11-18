@@ -1,6 +1,6 @@
 # NewsVerify 软件说明书
 
-**版本：** 0.7.0（Bridge） · **发布日期：** 2026-11-17  
+**版本：** 0.7.1（Source） · **发布日期：** 2026-11-18  
 **代码仓库：** https://github.com/zixiang2008/NewsVerify  
 **在线控制台：** https://new.caishen.today（局域网：`http://192.168.8.253:8095`）
 
@@ -239,6 +239,15 @@ curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
 - **扫码绑定**：Telegram 由 `segno` 生成 `t.me/<bot>?start` 深链 SVG 二维码，用户扫码发送 `/start` 后，统一 webhook 自动记录 `bound_chat_id`，向导轮询 `/bind-status` 显示绑定完成；飞书、钉钉、企业微信、LINE、QQ/OneBot 因官方绑定流程不同，提供官方扫码入口说明与统一接收地址一键复制。
 - **真实测试**：`app/integrations/__init__.py` 按各平台官方消息格式构造测试消息（飞书 `msg_type:text` + 时间戳签名、钉钉 `msgtype:text` + HMAC-SHA256 加签、企业微信、Discord `content`、Slack `text`、LINE `messages`、Matrix `m.text`、Telegram Bot API），测试结果与错误回写状态面板。
 - **验证**：15 项接入逻辑测试覆盖平台引导完整性、脱敏/合并、各平台消息体与加签、未配置安全失败、二维码生成；并对渲染后 JS 执行 `node --check`。
+
+## 7.8 v0.7.1 新增：理论页引用体系与出处核实
+
+- **内容**：`app/web/theory.py` 由 174 行扩展为完整理论说明页，含八章：为什么需要框架、新闻真实性理论全景、理论与实现映射、方法论、频段体系来源、体系图示、学术评价、引用源注释。
+- **理论全景**：按哲学层（真理符合论/融贯论/验证主义）、认知层（信源可信度、确认偏误）、方法层（FEVER/AVeriTeC/Veracity/trafilatura）、机构层（MBFC/Ad Fontes/NewsGuard/AllSides/路透研究院）四层梳理「如何看新闻真实性」的研究。
+- **映射表**：逐条列出每条理论用在本系统哪一部分、如何组合，明确「理论 → 形态 → 防偏差 → 流程 → 排序」的链路。
+- **引用注释**：正文 `[1]`–`[17]` 编号引用跳转文末；每条给出原文地址（arXiv / ACL Anthology / DOI / 官方页，多来源全列）、最早发表机构、年份、理论依据与系统用途。共 27 个不同的原文外链。
+- **出处核实**：修正旧页错误引用——FEVER 应为 arXiv:1803.05355（NAACL 2018）、AVeriTeC 为 arXiv:2305.13117（NeurIPS 2023）、trafilatura 为 ACL 2021.acl-demo.15；补充 Hovland & Weiss 1951（DOI 10.1086/266350，耶鲁）、Nickerson 1998（DOI 10.1037/1089-2680.2.2.175，Tufts）、斯坦福哲学百科 Truth 条目等奠基来源。
+- **验证**：`py_compile` 通过；正文引用编号与文末注释编号完全一致（1–17）；HTML 标签闭合检查全部通过；27 条原文链接无重复错误号。
 
 ---
 

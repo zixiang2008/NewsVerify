@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.7.0 (Bridge) · **Release date:** 2026-11-17  
+**Version:** 0.7.1 (Source) · **Release date:** 2026-11-18  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -239,6 +239,15 @@ For every release:
 - **QR binding**: `segno` renders a `t.me/<bot>?start` SVG QR for Telegram; scanning and sending `/start` makes the unified webhook record `bound_chat_id`, and the wizard polls `/bind-status`. Feishu / DingTalk / WeCom / LINE / QQ OneBot use their own official scan flows, so the wizard surfaces official scan guidance plus one-click copy of the inbound URL.
 - **Real tests**: `app/integrations/__init__.py` builds platform-native message bodies (Feishu `msg_type:text` + timestamp signature, DingTalk `msgtype:text` + HMAC-SHA256 signing, WeCom, Discord `content`, Slack `text`, LINE `messages`, Matrix `m.text`, Telegram Bot API); results and errors are written back to the status panel.
 - **Verification**: 15 onboarding-logic checks cover guide completeness, masking/merging, platform payloads and signing, safe failure when unconfigured, and QR generation; rendered JS is checked with `node --check`.
+
+## 7.8 New in v0.7.1 — theory page citation system and source verification
+
+- **Content**: `app/web/theory.py` was expanded into a full theory document with eight sections: why a framework is needed, an overview of news-authenticity theory, theory-to-implementation mapping, methodology, credibility-band origins, system diagram, academic assessment, and source notes.
+- **Theory overview**: organises research on judging news authenticity into four layers — philosophical (correspondence / coherence / verificationist truth), cognitive (source credibility, confirmation bias), methodological (FEVER / AVeriTeC / Veracity / trafilatura) and institutional (MBFC / Ad Fontes / NewsGuard / AllSides / Reuters Institute).
+- **Mapping table**: lists which part of the system each theory powers and how they combine into the chain "philosophy → output form, cognition → bias control, method → reproducible pipeline, institutions → source ranking".
+- **Source notes**: in-text `[1]`–`[17]` citations link to the end section; each entry gives original URLs (arXiv / ACL Anthology / DOI / official pages, all sources where multiple exist), the earliest publishing institution, year, theoretical basis and system use. 27 distinct original URLs in total.
+- **Source verification**: fixed wrong references in the old page — FEVER → arXiv:1803.05355 (NAACL 2018), AVeriTeC → arXiv:2305.13117 (NeurIPS 2023), trafilatura → ACL 2021.acl-demo.15; added foundational sources such as Hovland & Weiss 1951 (DOI 10.1086/266350, Yale), Nickerson 1998 (DOI 10.1037/1089-2680.2.2.175, Tufts), and the Stanford Encyclopedia of Philosophy "Truth" entry.
+- **Verification**: `py_compile` passes; in-text citation numbers exactly match source-note numbers (1–17); HTML tag closure checks all pass; no leftover incorrect arXiv IDs.
 
 ---
 

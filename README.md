@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.7.0 (Bridge)** · 2026-11-17.
+**Self-hosted, auditable fact-checking workspace.** Version **0.7.1 (Source)** · 2026-11-18.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -22,6 +22,12 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | English | Six systems and verdict rules |
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
+
+## What is new in 0.7.1
+
+- **Rebuilt `/theory` page**: a four-layer overview of how to judge news authenticity (philosophy / cognition / method / institutions), plus a mapping table showing which theory powers which part of the system.
+- **Every citation verified and linked**: numbered `[1]`–`[17]` references with original URLs (arXiv / ACL Anthology / DOI / official pages), earliest publishing institution, year and theoretical basis — including foundational work such as Hovland & Weiss 1951 (source credibility) and Nickerson 1998 (confirmation bias).
+- **Corrected wrong paper IDs** from the previous page (FEVER, AVeriTeC, trafilatura) and redrew the system diagram into five layers.
 
 ## What is new in 0.7.0
 
