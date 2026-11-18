@@ -16,7 +16,21 @@ VERSION="$(tr -d '\n' < /tmp/newsverify_version.txt)"
 rm -f /tmp/newsverify_version.txt
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
-  git init -b "$BRANCH"
+  # When the working copy has no .git but the remote already has history,
+  # bootstrap from the remote first. Otherwise a fresh root commit would
+  # make the subsequent rebase fail with "unrelated histories".
+  if git ls-remote --exit-code "$REPO_URL" "refs/heads/$BRANCH" >/dev/null 2>&1; then
+    TMP_CLONE="$(mktemp -d)"
+    git clone --quiet --depth=1 --branch "$BRANCH" "$REPO_URL" "$TMP_CLONE/repo"
+    rsync -a --delete \
+      --exclude='.git' --include='.env.example' --exclude='.env' --exclude='.env.*' \
+      --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' \
+      "$ROOT/" "$TMP_CLONE/repo/"
+    mv "$TMP_CLONE/repo/.git" "$ROOT/.git"
+    rm -rf "$TMP_CLONE"
+  else
+    git init -b "$BRANCH"
+  fi
 fi
 
 # Safety: never publish secrets.
