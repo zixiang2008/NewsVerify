@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.7.1（Source） · 文档更新：2026-11-18
+> 软件版本：0.7.2（Lens） · 文档更新：2026-11-18
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.7.1）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.7.2）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -429,3 +429,17 @@ $DOCKER compose logs -f bot worker
 - **页面结构**：`app/web/theory.py` 的 `PAGE` 扩为八章，新增「真实性理论全景」（哲学/认知/方法/机构四层）与「理论与实现映射」表；正文 `[1]`–`[17]` 编号引用可跳转文末「引用源注释」，每条含原文地址、最早发表机构、年份、理论依据、系统用途。
 - **体系图**：SVG 重绘为五层（理论依据→核查方法→评级研究→系统流水线→输出评价），节点标注引用编号。
 - **验证**：`py_compile` 通过；正文引用与文末注释编号 1–17 完全一致；8 个 section / 27 条外链 / 26 个 li 标签闭合检查通过；旧错误 arXiv 号无残留。
+
+### 13.10 v0.7.2：全面代码审查与追踪脑图
+
+- **需求**：用户要求全面检查代码、按运行状态修 bug，重点确认每条逻辑链路的响应是否落实、逻辑关系显示是否最佳、追踪项目完整性能否更人性化（图表/脑图/Markdown），并明确选 B 方案「增加脑图，直观看到所有新闻，可展开」。
+- **审查方式**：结合运行容器日志（worker 的 DDG 超时）、公网接口、独立只读代码审查代理与人工精读前端渲染链路，交叉确认问题。
+- **修复的 bug**（详见 CHANGELOG v0.7.2）：
+  - `app/worker.py`：新增 `_freq_to_hours()` / `_ensure_subscription()`，核查完成后按提交时选的频率幂等建立订阅（此前 freq 从未落实）；最终结果写回改为基于现有 result 合并，保留 `progress` 时间线；追踪通知新增可读摘要并走 `_broadcast_im()` 多渠道广播（此前只发 `chat_id=0` 必然失败）。
+  - `app/web/app.py`：`/api/events` 增 `active_subs` 字段，列表节点不再写死 0；recheck 从最近 job.payload 取完整原文；v1 track 幂等复用活跃订阅；详情弹窗字段统一 `esc()`；追踪更新记录按 `Notification.kind` 显示可读摘要。
+  - `app/verification/top_media.py`：补充 site: 查询的判空改用 `len(hits)`（此前用未计算的 `hit_count` 恒为 0）。
+- **脑图实现**（`app/web/app.py` 前端）：
+  - `showMindmap()` 全景卡片 + `showEventMindmap(id)` 单新闻六分支脑图；`mmWrap()` 构建可折叠分支、`mmToggle()`/`mmExpandAll()` 控制展开；`_modalView` 视图标记配合 `stopDetailPoll()` 防止轮询覆盖。
+  - 全新 `.mm-*` CSS：点阵画布、渐变根节点、状态色边框，全部用主题 CSS 变量，自动适配 9 套主题；纯前端零依赖。
+  - 三个入口：任务历史面板「🧠 追踪脑图」按钮、事件详情弹窗、追踪状态弹窗。
+- **验证**：`py_compile` 全通过；运行时 HTML 脚本 `node --check` 通过；onclick 引用函数完整性检查通过（无未定义函数）。

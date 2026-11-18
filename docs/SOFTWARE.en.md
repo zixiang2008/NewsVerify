@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.7.1 (Source) · **Release date:** 2026-11-18  
+**Version:** 0.7.2 (Lens) · **Release date:** 2026-11-18  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -248,6 +248,16 @@ For every release:
 - **Source notes**: in-text `[1]`–`[17]` citations link to the end section; each entry gives original URLs (arXiv / ACL Anthology / DOI / official pages, all sources where multiple exist), the earliest publishing institution, year, theoretical basis and system use. 27 distinct original URLs in total.
 - **Source verification**: fixed wrong references in the old page — FEVER → arXiv:1803.05355 (NAACL 2018), AVeriTeC → arXiv:2305.13117 (NeurIPS 2023), trafilatura → ACL 2021.acl-demo.15; added foundational sources such as Hovland & Weiss 1951 (DOI 10.1086/266350, Yale), Nickerson 1998 (DOI 10.1037/1089-2680.2.2.175, Tufts), and the Stanford Encyclopedia of Philosophy "Truth" entry.
 - **Verification**: `py_compile` passes; in-text citation numbers exactly match source-note numbers (1–17); HTML tag closure checks all pass; no leftover incorrect arXiv IDs.
+
+### 7.9 New in v0.7.2 — Interactive Tracking Mind Map and bug-fix pass
+
+- **Tracking Mind Map** (`showMindmap` / `showEventMindmap` in `app/web/app.py`), answering the need for a more intuitive presentation of each story's completeness, offers two views.
+  - **Overview**: with no event ID, a card grid shows every task's status, verdict, claim count, media coverage and tracking flag; clicking a card opens that story's mind map.
+  - **Per-story mind map**: the story is the root, expanding into six collapsible branches — ① claims & verdicts (each claim + label + confidence) ② evidence & provenance (deduplicated sources, clickable originals, media ranks) ③ media coverage (Top-30 lit count + outlet names) ④ continuous tracking (active state, next check, readable update log) ⑤ processing progress (timeline) ⑥ job history (attempts and timestamps).
+  - **Interaction**: every node expands/collapses on click (`mmToggle`), with expand/collapse-all (`mmExpandAll`); the root node and toolbar jump to full detail; the `_modalView` marker prevents polling from overwriting a switched view.
+  - **Styling**: pure CSS variables (dotted canvas, gradient root, state-coloured borders) that adapt to all 9 themes, with no external dependency.
+- **Readable tracking updates**: `Notification.kind` now stores summaries such as "evidence change · N sources" / "tracking started · baseline", shown in the UI instead of a bare 64-character hash.
+- **Bug fixes**: see CHANGELOG v0.7.2 — subscription creation from `freq`, progress preservation, list tracking-node state, polling cleanup, multi-channel tracking notifications, Top-30 emptiness check, recheck original text, v1 track de-duplication and modal escaping.
 
 ---
 

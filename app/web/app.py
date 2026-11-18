@@ -437,8 +437,8 @@ async def api_version():
 async def api_events():
     sm = get_sessionmaker()
     async with sm() as session:
-        from sqlalchemy import select
-        from app.db.models import Event, Job, Verdict, Claim
+        from sqlalchemy import select, func
+        from app.db.models import Event, Job, Verdict, Claim, Subscription
         res = await session.execute(select(Event).order_by(Event.created_at.desc()).limit(50))
         events = res.scalars().all()
         out = []
@@ -449,6 +449,13 @@ async def api_events():
             vs = verdicts_res.scalars().all()
             claims_res = await session.execute(select(Claim).where(Claim.event_id == e.id))
             cs = claims_res.scalars().all()
+            # 活跃订阅数：用于列表卡片正确点亮“持续追踪”节点（过去前端写死 0）
+            sub_res = await session.execute(
+                select(func.count()).select_from(Subscription).where(
+                    Subscription.event_id == e.id, Subscription.active == True  # noqa: E712
+                )
+            )
+            active_subs = sub_res.scalar() or 0
             # 列表只需轻量 job_result：summary / progress / 媒体覆盖汇总，
             # 不返回庞大的 top_media 明细（详情接口按需返回）。
             slim_result = None
@@ -469,6 +476,7 @@ async def api_events():
                 "job_id": job.id if job else None,
                 "job_status": job.status if job else None,
                 "job_result": slim_result,
+                "active_subs": active_subs,
                 "claims": [{"id": c.id, "text": c.text, "language": c.language} for c in cs],
                 "verdicts": [{"label": v.label, "confidence": v.confidence, "rationale": v.rationale,
                               "counter_argument": v.counter_argument, "evidence_gaps": v.evidence_gaps} for v in vs],
@@ -684,11 +692,24 @@ async def api_delete_event(event_id: str):
 async def api_recheck(event_id: str):
     sm = get_sessionmaker()
     async with sm() as session:
+        from sqlalchemy import select
         from app.db.models import Event, Job
         e = await session.get(Event, event_id)
         if not e:
             return JSONResponse({"error": "not found"}, status_code=404)
-        job = Job(kind="check", status="queued", payload={"event_id": e.id, "text": e.title, "urls": [], "deep": False, "chat_id": None, "user_id": None}, user_id=None, chat_id=None)
+        # 优先取最近一次 job 里的完整原文；Event.title 只是截断到 120 字的展示标题，
+        # 用它重查会丢失原文导致主张拆分质量下降。
+        prev = await session.execute(
+            select(Job).where(Job.payload["event_id"].as_string() == e.id).order_by(Job.created_at.desc()).limit(1)
+        )
+        prev_job = prev.scalars().first()
+        raw_text = (prev_job.payload or {}).get("text") if prev_job else None
+        full_text = raw_text or e.title
+        job = Job(kind="check", status="queued",
+                  payload={"event_id": e.id, "text": full_text, "urls": [], "deep": False,
+                           "chat_id": None, "user_id": None,
+                           "mode": (prev_job.payload or {}).get("mode", "full") if prev_job else "full",
+                           "freq": "none"}, user_id=None, chat_id=None)
         session.add(job)
         e.status = "queued"
         await session.commit()
@@ -848,14 +869,24 @@ async def api_v1_track(event_id: str, request: Request, ok: bool = Depends(verif
     interval = (body or {}).get("interval", "24h")
     sm = get_sessionmaker()
     async with sm() as session:
+        from sqlalchemy import select
         from app.db.models import Subscription
         from datetime import datetime, timezone, timedelta
-        iv = 24
-        if interval == "6h": iv = 6
-        elif interval == "week": iv = 168
-        sub = Subscription(event_id=event_id, user_id=0, chat_id=0, interval_hours=iv,
-                           next_run_at=datetime.now(timezone.utc) + timedelta(hours=iv))
-        session.add(sub)
+        iv = _interval_to_hours(interval)
+        # 幂等：已有活跃订阅则更新，避免重复调用产生多条追踪任务。
+        res = await session.execute(
+            select(Subscription).where(Subscription.event_id == event_id, Subscription.active == True)  # noqa: E712
+        )
+        sub = res.scalars().first()
+        if sub:
+            sub.interval_hours = iv
+            sub.paused = False
+            sub.active = True
+            sub.next_run_at = datetime.now(timezone.utc) + timedelta(hours=iv)
+        else:
+            sub = Subscription(event_id=event_id, user_id=0, chat_id=0, interval_hours=iv,
+                               next_run_at=datetime.now(timezone.utc) + timedelta(hours=iv))
+            session.add(sub)
         await session.commit()
         return {"subscription_id": sub.id, "interval_hours": iv}
 
@@ -1213,6 +1244,50 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--muted);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* ==== v0.7.2 追踪脑图（可展开思维导图）==== */
+.mm-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.mm-canvas{position:relative;overflow:auto;background:
+  radial-gradient(circle at 1px 1px,var(--border) 1px,transparent 0) 0 0/22px 22px,
+  var(--surface-0);border:1px solid var(--border);border-radius:14px;padding:18px;min-height:280px;max-height:62vh}
+.mm{flex:none;position:relative;display:flex;flex-direction:column;align-items:center;gap:0}
+.mm-root{background:linear-gradient(135deg,var(--accent),var(--accent2));color:var(--on-accent);
+  border-radius:14px;padding:12px 20px;font-weight:800;font-size:14px;box-shadow:var(--shadow);
+  max-width:360px;text-align:center;line-height:1.4;cursor:pointer;user-select:none}
+.mm-root .mm-sub{display:block;font-size:10px;font-weight:500;opacity:.85;margin-top:3px}
+.mm-branches{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-top:22px;position:relative}
+.mm-branches:before{content:'';position:absolute;top:-22px;left:50%;width:2px;height:22px;background:var(--border)}
+.mm-branch{position:relative;display:flex;flex-direction:column;align-items:center;min-width:150px;max-width:280px}
+.mm-branch:before{content:'';position:absolute;top:0;left:50%;width:2px;height:0;background:var(--border)}
+.mm-node{background:var(--card);border:1.5px solid var(--border);border-radius:11px;padding:9px 12px;
+  font-size:12px;color:var(--text);cursor:pointer;user-select:none;transition:.15s;
+  box-shadow:0 3px 10px rgba(0,0,0,.12);max-width:100%;text-align:center}
+.mm-node:hover{border-color:var(--accent);transform:translateY(-1px)}
+.mm-node .mm-t{font-weight:700;display:flex;align-items:center;gap:6px;justify-content:center}
+.mm-node .mm-m{color:var(--muted);font-size:10px;margin-top:3px}
+.mm-node.done{border-color:var(--ok);background:var(--reported-bg)}
+.mm-node.active{border-color:var(--accent);background:rgba(56,189,248,.08)}
+.mm-node.fail{border-color:var(--bad)}
+.mm-node.lit{border-color:var(--accent3)}
+.mm-kids{margin-top:16px;display:flex;flex-direction:column;gap:8px;width:100%;align-items:center}
+.mm-leaf{width:100%;background:var(--surface-1);border:1px solid var(--border);border-radius:9px;
+  padding:7px 10px;font-size:11px;line-height:1.5;color:var(--text);text-align:left}
+.mm-leaf a{color:var(--accent);text-decoration:none}
+.mm-leaf a:hover{text-decoration:underline}
+.mm-leaf .mm-lb{color:var(--muted);font-size:10px}
+.mm-badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:999px;font-weight:700;margin-left:4px}
+.mm-badge.b-done{background:rgba(34,197,94,.18);color:var(--ok-text)}
+.mm-badge.b-active{background:rgba(56,189,248,.18);color:var(--accent-soft)}
+.mm-badge.b-fail{background:rgba(239,68,68,.18);color:var(--bad-text)}
+.mm-badge.b-track{background:rgba(167,139,250,.2);color:var(--accent2-soft)}
+.mm-hint{font-size:10px;color:var(--muted);margin:6px 0}
+.mm-overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:10px}
+.mm-ov-card{background:var(--surface-0);border:1px solid var(--border);border-radius:12px;padding:12px;cursor:pointer;transition:.15s}
+.mm-ov-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+.mm-ov-card .ov-t{font-weight:700;font-size:12px;color:var(--text);line-height:1.4}
+.mm-ov-card .ov-m{color:var(--muted);font-size:10px;margin-top:6px}
+.mm-progress{height:4px;border-radius:999px;background:var(--border);margin-top:8px;overflow:hidden}
+.mm-progress>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent3))}
+
 /* system status panel */
 .sys-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .sys-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:12px}
@@ -1328,7 +1403,9 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
 
     <div class="panel" style="margin-top:16px">
-      <h2><span class="icon">📜</span>任务历史</h2>
+      <h2><span class="icon">📜</span>任务历史
+        <button class="mini-btn" style="float:right;margin-top:-2px" onclick="showMindmap()" title="以脑图直观查看所有新闻核查与追踪链路">🧠 追踪脑图</button>
+      </h2>
       <div class="tabs">
         <div class="tab active" onclick="setFilter('all',this)">全部</div>
         <div class="tab" onclick="setFilter('done',this)">已完成</div>
@@ -1933,7 +2010,7 @@ function renderEvents(){
       const progress=jr.progress||[];
       const lastStep=progress.length?progress[progress.length-1]:null;
       const evidCount=progress.filter(p=>(p.step||'').includes('证据收集')).length;
-      const nodeStates=nodeState(progress,claims.length,verdicts.length,evidCount,jr.top_media,0);
+      const nodeStates=nodeState(progress,claims.length,verdicts.length,evidCount,jr.top_media,e.active_subs||0);
       const chips=nodeStates.map(n=>`<span class="node-chip ${n.state}" title="${NODE_DEFS.find(d=>d.key===n.key)?.desc||''}">${NODE_LABEL[n.key]}</span>`).join('');
       const stCls=['done','running','queued','failed'].includes(st)?st:'';
       const mediaHits=jr.media_hits||0;
@@ -2005,16 +2082,16 @@ async function showDetail(id){
   // editable title
   html+=`<div style="margin:8px 0"><input class="editable" id="editTitle" value="${(d.title||'').replace(/"/g,'&quot;')}" /><button class="btn small" style="margin-left:8px" onclick="saveTitleFromModal('${d.id}')">保存修改</button></div>`;
   // summary
-  if(d.summary) html+=`<div class="note" style="margin:8px 0"><b>总结：</b>${d.summary}</div>`;
+  if(d.summary) html+=`<div class="note" style="margin:8px 0"><b>总结：</b>${esc(d.summary)}</div>`;
   // claims + verdicts
   for(const c of d.claims){
-    html+=`<h3>主张：${c.text}</h3>`;
+    html+=`<h3>主张：${esc(c.text)}</h3>`;
     if(c.verdict){
       const v=c.verdict;
-      html+=`<p><span class="tag ${v.label}">${v.label}</span> 置信度 ${(v.confidence*100).toFixed(0)}%</p>`;
-      html+=`<p>${v.rationale}</p>`;
-      if(v.counter_argument) html+=`<p><b>反证：</b>${v.counter_argument}</p>`;
-      if(v.evidence_gaps&&v.evidence_gaps.length) html+=`<p><b>缺口：</b>${v.evidence_gaps.join('；')}</p>`;
+      html+=`<p><span class="tag ${esc(v.label)}">${esc(v.label)}</span> 置信度 ${(v.confidence*100).toFixed(0)}%</p>`;
+      html+=`<p>${esc(v.rationale)}</p>`;
+      if(v.counter_argument) html+=`<p><b>反证：</b>${esc(v.counter_argument)}</p>`;
+      if(v.evidence_gaps&&v.evidence_gaps.length) html+=`<p><b>缺口：</b>${esc(v.evidence_gaps.join('；'))}</p>`;
     }
     if(c.evidence&&c.evidence.length){
       html+=`<h3>证据（${c.evidence.length}）</h3>`;
@@ -2054,6 +2131,11 @@ async function showDetail(id){
         const med=cm.media||[];
         const h=med.filter(x=>Number(x.hit_count||0)>0);
         html+=`<div class="ev"><b>主张 ${idx+1}：</b>${esc(cm.claim||'')}<br><span style="color:var(--ok-text)">${h.length} 家媒体报道</span>：${h.map(x=>esc(x.name)).join('、')||'无'}</div>`;
+        // 该主张命中的具体来源链接（可点开原文，便于人工审计）
+        if(h.length){
+          const links=h.flatMap(x=>(x.hits||[])).map(hh=>`<a class="src-link" href="${esc(hh.url||'')}" target="_blank">↗ ${esc((hh.title||hh.url||'').slice(0,48))}</a>`).join('');
+          if(links) html+=`<div class="src-list" style="margin:2px 0 6px">${links}</div>`;
+        }
       });
     }
   }
@@ -2065,8 +2147,8 @@ async function showDetail(id){
         (j.attempts?` · 执行次数 ${j.attempts}`:'')+
         (j.started_at?` · 开始 ${new Date(j.started_at).toLocaleString()}`:'')+
         (j.finished_at?` · 完成 ${new Date(j.finished_at).toLocaleString()}`:'')+
-        (j.error?`<br><span style="color:var(--bad-text)">错误: ${j.error}</span>`:'')+
-        (j.result&&j.result.summary?`<br><b>结果：</b>${j.result.summary}`:'')+
+        (j.error?`<br><span style="color:var(--bad-text)">错误: ${esc(j.error)}</span>`:'')+
+        (j.result&&j.result.summary?`<br><b>结果：</b>${esc(j.result.summary)}`:'')+
         `</div>`;
       // progress steps
       if(j.result&&j.result.progress&&j.result.progress.length){
@@ -2089,6 +2171,7 @@ async function showDetail(id){
     html+=`<p class="note">未开启追踪</p>`;
   }
   html+=`<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="mini-btn" onclick="showMindmap('${d.id}')">🧠 脑图视图</button>
     <button class="mini-btn track" onclick="showTrackStatus('${d.id}')">📡 追踪状态汇总</button>
     <button class="mini-btn setting" onclick="showTrackSettings('${d.id}')">⚙️ 修改追踪设置</button>
   </div>`;
@@ -2100,16 +2183,22 @@ async function showDetail(id){
   </div>`;
   document.getElementById('modalContent').innerHTML=html;
   document.getElementById('modalBg').style.display='flex';
-  // 任务进行中时自动刷新弹窗，实时展示节点与结果
+  // 任务进行中时自动刷新弹窗，实时展示节点与结果。
+  // 关键：记录当前视图为 detail，轮询回调仅在仍停留在 detail 视图时才刷新，
+  // 否则用户切到追踪状态/设置/脑图后会被强制覆盖回去。
+  _modalView='detail'; _modalEventId=id;
   if(latestJob.status==='running'||latestJob.status==='queued'){
-    _detailPollId=setTimeout(()=>{ if(document.getElementById('modalBg').style.display==='flex') showDetail(id); },3000);
+    _detailPollId=setTimeout(()=>{
+      if(_modalView==='detail' && document.getElementById('modalBg').style.display==='flex') showDetail(id);
+    },3000);
   }
 }
-let _detailPollId=null;
+let _detailPollId=null,_modalView=null,_modalEventId=null;
+function stopDetailPoll(){ if(_detailPollId){clearTimeout(_detailPollId);_detailPollId=null;} }
 function closeModal(e){
   if(!e||e.target.id==='modalBg'){
     document.getElementById('modalBg').style.display='none';
-    if(_detailPollId){clearTimeout(_detailPollId);_detailPollId=null;}
+    stopDetailPoll(); _modalView=null;
   }
 }
 async function saveTitleFromModal(id){
@@ -2173,6 +2262,7 @@ async function untrackEvent(id){
 
 // ===== (a) 追踪状态：打开页面汇总显示该新闻的所有更新状态 =====
 async function showTrackStatus(id){
+  stopDetailPoll(); _modalView='track'; _modalEventId=id;
   const r=await fetch('/api/events/'+id);const d=await r.json();
   if(!d||!d.id){alert('事件不存在');return;}
   const subs=d.subscriptions||[];
@@ -2194,12 +2284,15 @@ async function showTrackStatus(id){
   html+=`<h3>所有更新记录（共 ${notifs.length} 条）</h3>`;
   if(notifs.length){
     for(const n of notifs){
-      html+=`<div class="upd-item"><b>${esc(n.kind||'update')}</b> <span class="u-time">${n.created_at?new Date(n.created_at).toLocaleString():''}</span><br>内容指纹：${esc((n.content_hash||'').slice(0,16))}</div>`;
+      const isBaseline=(n.content_hash||'').startsWith('baseline:');
+      const label=n.kind&&n.kind!=='update'?esc(n.kind):(isBaseline?'追踪已启动 · 建立基线':'检测到更新');
+      html+=`<div class="upd-item"><b>${isBaseline?'🔹':'🔸'} ${label}</b> <span class="u-time">${n.created_at?new Date(n.created_at).toLocaleString():''}</span><br><span style="color:var(--muted)">指纹 ${esc((n.content_hash||'').replace('baseline:','').slice(0,12))}</span></div>`;
     }
   } else {
     html+=`<div class="note">尚未检测到更新。开启追踪后，系统会按设定间隔复查，一旦发现新证据或结论变化即在此汇总并推送。</div>`;
   }
   html+=`<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="mini-btn" onclick="showMindmap('${d.id}')" title="以脑图直观查看该新闻的完整核查链路">🧠 脑图视图</button>
     <button class="mini-btn setting" onclick="showTrackSettings('${d.id}')">⚙️ 修改追踪设置</button>
     <button class="mini-btn" onclick="showDetail('${d.id}')">← 返回事件详情</button>
   </div>`;
@@ -2209,6 +2302,7 @@ async function showTrackStatus(id){
 
 // ===== (b) 独立设置按钮：修改约定、频率、时间等追踪逻辑 =====
 async function showTrackSettings(id){
+  stopDetailPoll(); _modalView='settings'; _modalEventId=id;
   const r=await fetch('/api/events/'+id);const d=await r.json();
   if(!d||!d.id){alert('事件不存在');return;}
   const subs=d.subscriptions||[];
@@ -2237,6 +2331,153 @@ async function showTrackSettings(id){
   </div>`;
   document.getElementById('modalContent').innerHTML=html;
   document.getElementById('modalBg').style.display='flex';
+}
+
+// ===== v0.7.2 追踪脑图：可展开思维导图 =====
+let _mmExpanded={};   // 记录分支展开状态： key -> bool
+function mmToggle(key){
+  _mmExpanded[key]=!_mmExpanded[key];
+  const box=document.getElementById('mm-kids-'+key);
+  if(box) box.style.display=_mmExpanded[key]?'flex':'none';
+  const arrow=document.getElementById('mm-arrow-'+key);
+  if(arrow) arrow.textContent=_mmExpanded[key]?'▾':'▸';
+}
+function mmWrap(key,title,meta,cls,childrenHtml,defaultOpen){
+  const open=_mmExpanded[key]!==undefined?_mmExpanded[key]:!!defaultOpen;
+  _mmExpanded[key]=open;
+  return `<div class="mm-branch">
+    <div class="mm-node ${cls||''}" onclick="mmToggle('${key}')" title="点击展开/收起">
+      <div class="mm-t"><span id="mm-arrow-${key}">${open?'▾':'▸'}</span>${title}</div>
+      ${meta?`<div class="mm-m">${meta}</div>`:''}
+    </div>
+    <div class="mm-kids" id="mm-kids-${key}" style="display:${open?'flex':'none'}">${childrenHtml||''}</div>
+  </div>`;
+}
+function mmLeaf(body){return `<div class="mm-leaf">${body}</div>`;}
+
+// 全景脑图：所有新闻任务的概览（可点击进入单条脑图）
+async function showMindmap(eventId){
+  stopDetailPoll(); _modalView='mindmap'; _modalEventId=eventId||null;
+  if(eventId){ return showEventMindmap(eventId); }
+  const data=Array.isArray(allEvents)?allEvents:[];
+  let html=`<h2>🧠 追踪脑图 · 全景 <span class="badge">${data.length} 条新闻</span></h2>`;
+  html+=`<div class="sub">每张卡片是一条新闻核查链路。点击进入可展开其主张、证据、媒体覆盖与追踪更新的完整脑图。</div>`;
+  if(!data.length){ html+=`<div class="note">暂无任务。提交一条新闻后即可在这里看到全景脑图。</div>`; }
+  else{
+    html+=`<div class="mm-overview-grid">`;
+    for(const e of data){
+      const st=e.job_status||e.status||'unknown';
+      const jr=e.job_result||{};
+      const claims=(e.claims||[]).length;
+      const hits=jr.media_hits||0;
+      const verdict=(e.verdicts||[])[0];
+      const subs=e.active_subs||0;
+      const done=st==='done',run=(st==='running'||st==='queued');
+      const badge=subs?'<span class="mm-badge b-track">追踪中</span>':(done?'<span class="mm-badge b-done">已完成</span>':(run?'<span class="mm-badge b-active">进行中</span>':''));
+      const pct=done?100:(run?45:0);
+      html+=`<div class="mm-ov-card" onclick="showMindmap('${e.id}')">
+        <div class="ov-t">${esc((e.title||'').slice(0,46))}</div>
+        <div class="ov-m">${verdict?esc(verdict.label)+' · ':''}主张 ${claims} · 媒体 ${hits}/30 ${badge}</div>
+        <div class="mm-progress"><i style="width:${pct}%"></i></div>
+      </div>`;
+    }
+    html+=`</div>`;
+  }
+  document.getElementById('modalContent').innerHTML=html;
+  document.getElementById('modalBg').style.display='flex';
+}
+
+// 单条新闻脑图：以新闻为中心，向四周展开六大维度
+async function showEventMindmap(id){
+  let d;
+  try{ const r=await fetch('/api/events/'+id); d=await r.json(); }catch(e){}
+  if(!d||!d.id){ alert('事件不存在'); return; }
+  if(_modalView!=='mindmap') return;   // 切换视图后放弃渲染
+  d.claims=d.claims||[]; d.jobs=d.jobs||[];
+  d.subscriptions=d.subscriptions||[]; d.notifications=d.notifications||[];
+  const jr=(d.jobs[0]&&d.jobs[0].result)||{};
+  const st=(d.jobs[0]&&d.jobs[0].status)||d.status||'unknown';
+  const done=st==='done',run=(st==='running'||st==='queued');
+
+  // 分支1：主张与判定
+  let claimsHtml='';
+  d.claims.forEach((c,i)=>{
+    const v=c.verdict;
+    const vb=v?`<span class="mm-badge ${v.label==='supported'?'b-done':(v.label==='refuted'?'b-fail':'b-active')}">${esc(v.label)}</span>`:'';
+    const evN=(c.evidence||[]).length;
+    claimsHtml+=mmLeaf(`<b>${i+1}. ${esc((c.text||'').slice(0,90))}</b> ${vb}<br><span class="mm-lb">证据 ${evN} 条${v?' · 置信度 '+(v.confidence*100).toFixed(0)+'%':''}</span>`);
+  });
+  const bClaims=mmWrap('claims','🔬 主张与判定',`${d.claims.length} 条原子主张`,done?'done':(run?'active':''),claimsHtml||mmLeaf('<span class="mm-lb">尚未拆分主张</span>'),true);
+
+  // 分支2：证据来源（列出去重后的来源域名/标题）
+  let eviHtml=''; const seen=new Set();
+  d.claims.forEach(c=>(c.evidence||[]).forEach(ev=>{
+    const k=ev.url||ev.domain;
+    if(!k||seen.has(k))return; seen.add(k);
+    const rank=ev.media_rank?`第 ${ev.media_rank} 名`:'非榜单来源';
+    eviHtml+=mmLeaf(`<a href="${esc(ev.url||'')}" target="_blank">↗ ${esc((ev.title||ev.domain||'来源').slice(0,44))}</a><br><span class="mm-lb">${esc(ev.media_name||ev.domain||'')} · ${rank}</span>`);
+  }));
+  const bEvi=mmWrap('evidence','📚 证据与溯源',`${seen.size} 个独立来源`,'lit',eviHtml||mmLeaf('<span class="mm-lb">暂无证据</span>'),false);
+
+  // 分支3：媒体覆盖（Top30 点亮统计）
+  let mediaHtml='';
+  if(d.top_media&&d.top_media.length){
+    const lit=d.top_media.filter(m=>Number(m.hit_count||0)>0);
+    mediaHtml+=mmLeaf(`<b>${lit.length} / ${d.top_media.length} 家媒体报道</b> · 共 ${d.total_reports||0} 条来源`);
+    if(lit.length) mediaHtml+=mmLeaf(`<span class="mm-lb">${lit.slice(0,12).map(m=>esc(m.name)).join('、')}${lit.length>12?' 等':''}</span>`);
+  } else mediaHtml=mmLeaf('<span class="mm-lb">尚未进行媒体交叉核查</span>');
+  const bMedia=mmWrap('media','🌐 媒体覆盖',`${d.media_hits||0}/30 家`,d.media_hits?'lit':'',mediaHtml,true);
+
+  // 分支4：追踪状态与更新
+  const active=d.subscriptions.filter(s=>s.active&&!s.paused);
+  let trackHtml=mmLeaf(`<b>${active.length?('🟢 追踪中 · 间隔 '+active[0].interval_hours+'h'):'⚪ 未开启追踪'}</b>`);
+  if(active.length&&active[0].next_run_at) trackHtml+=mmLeaf(`<span class="mm-lb">下次检查 ${new Date(active[0].next_run_at).toLocaleString()}</span>`);
+  (d.notifications||[]).slice(0,8).forEach(n=>{
+    const base=(n.content_hash||'').startsWith('baseline:');
+    trackHtml+=mmLeaf(`🔸 ${esc(n.kind&&n.kind!=='update'?n.kind:(base?'追踪已启动':'检测到更新'))}<br><span class="mm-lb">${n.created_at?new Date(n.created_at).toLocaleString():''}</span>`);
+  });
+  const bTrack=mmWrap('track','📡 持续追踪',`${d.notifications.length} 条更新`,active.length?'lit':'',trackHtml,true);
+
+  // 分支5：处理进度（时间线）
+  let progHtml='';
+  const prog=(jr.progress||[]);
+  if(prog.length) prog.forEach(p=>{ progHtml+=mmLeaf(`⏱ ${p.time?new Date(p.time).toLocaleTimeString():''} · ${esc(p.step)}`); });
+  else progHtml=mmLeaf('<span class="mm-lb">暂无进度记录</span>');
+  const bProg=mmWrap('progress','⏳ 处理进度',`${prog.length} 个步骤`,done?'done':(run?'active':''),progHtml,false);
+
+  // 分支6：任务历史
+  let histHtml='';
+  d.jobs.forEach(j=>{
+    histHtml+=mmLeaf(`<b>${esc(j.kind)}</b> · ${esc(j.status)}${j.attempts>1?' · '+j.attempts+' 次':''}<br><span class="mm-lb">${j.finished_at?new Date(j.finished_at).toLocaleString():''}</span>`);
+  });
+  const bHist=mmWrap('history','🗂 任务历史',`${d.jobs.length} 次执行`,'',histHtml||mmLeaf('<span class="mm-lb">无历史</span>'),false);
+
+  const verdict=(d.claims.find(c=>c.verdict)||{}).verdict;
+  let html=`<h2>🧠 核查链路脑图 <span class="badge">${id.slice(0,8)}</span></h2>`;
+  html+=`<div class="sub">${esc(d.title)}</div>`;
+  html+=`<div class="mm-toolbar">
+    <button class="mini-btn" onclick="mmExpandAll(true)">⊞ 全部展开</button>
+    <button class="mini-btn" onclick="mmExpandAll(false)">⊟ 全部收起</button>
+    <button class="mini-btn" onclick="showMindmap()">← 返回全景</button>
+    <button class="mini-btn" onclick="showDetail('${id}')">📄 事件详情</button>
+  </div>`;
+  html+=`<div class="mm-canvas"><div class="mm">
+    <div class="mm-root" onclick="showDetail('${id}')" title="点击查看事件详情">
+      📰 ${esc(d.title.slice(0,26))}
+      <span class="mm-sub">${verdict?esc(verdict.label)+' · ':'已核查 · '}${d.claims.length} 主张 · ${d.media_hits||0}/30 媒体${active.length?' · 追踪中':''}</span>
+    </div>
+    <div class="mm-branches">${bClaims}${bEvi}${bMedia}${bTrack}${bProg}${bHist}</div>
+  </div></div>`;
+  html+=`<div class="mm-hint">💡 点击任意节点可展开/收起其下级；点击根节点或“事件详情”查看完整原文与来源。</div>`;
+  document.getElementById('modalContent').innerHTML=html;
+  document.getElementById('modalBg').style.display='flex';
+}
+function mmExpandAll(open){
+  Object.keys(_mmExpanded).forEach(k=>{
+    _mmExpanded[k]=open;
+    const box=document.getElementById('mm-kids-'+k); if(box) box.style.display=open?'flex':'none';
+    const arrow=document.getElementById('mm-arrow-'+k); if(arrow) arrow.textContent=open?'▾':'▸';
+  });
 }
 
 async function saveTrackSettings(id,hasSub){

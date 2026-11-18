@@ -1,8 +1,21 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.7.1 (Source, 2026-11-18)**.
+All notable changes to NewsVerify are documented here. The current version is **0.7.2 (Lens, 2026-11-18)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.7.2 — Lens (2026-11-18)
+
+- Added the interactive **Tracking Mind Map** (`🧠`): an overview screen shows every news item at a glance; opening one renders a mind map centred on that story with six collapsible branches — claims & verdicts, evidence & provenance, media coverage, continuous tracking, processing progress, and job history.
+- Mind map supports expand/collapse all, node drill-down, and a root node that jumps straight to full detail; entry points added to both the tracking-status and event-detail views.
+- Tracking update records now show readable summaries (evidence change / number of sources / "tracking started") instead of bare hash fingerprints.
+- Fixed: the update frequency chosen at submission (`freq`) was never turned into a subscription — the worker now creates/upserts it idempotently once the check completes.
+- Fixed: the worker's final `job.result` write overwrote the accumulated `progress`, emptying the progress timeline after completion.
+- Fixed: the list card's "continuous tracking" node had `subs` hard-coded to `0` and never lit up (API now returns `active_subs`).
+- Fixed: the detail-view polling timer was not stopped on view switch, forcibly overwriting tracking/settings/mind-map views.
+- Fixed: tracking notifications were only sent to `chat_id=0` (always failing for web subscriptions) and skipped configured IM channels — now broadcast to all configured channels.
+- Fixed: Top-30 supplementary queries used an uncomputed `hit_count` for emptiness checks; `recheck` used the truncated title and lost the original text; v1 track inserted duplicate subscriptions.
+- Fixed: several unescaped fields in the detail modal that could break layout or allow injection; per-claim media coverage now includes clickable source links.
 
 ## 0.7.1 — Source (2026-11-18)
 

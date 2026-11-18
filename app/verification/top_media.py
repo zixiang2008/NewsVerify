@@ -144,7 +144,9 @@ async def check_top_media(claim_text: str, max_per: int = 2) -> List[Dict]:
                     result[r]["hits"].append(_hit(h))
 
     # 2) 对尚未命中、且是重点媒体（前 6 家）做补充 site: 查询（低并发）
-    missing_top = [m for m in TOP_MEDIA[:6] if result[m["rank"]]["hit_count"] == 0]
+    # 修复：此处 hit_count 尚未计算（第 166 行才赋值），必须按 hits 列表长度判断，
+    # 否则已命中的媒体也会被判为“缺失”而重复 site: 查询、覆盖已有结果。
+    missing_top = [m for m in TOP_MEDIA[:6] if len(result[m["rank"]]["hits"]) == 0]
 
     async def _site(m):
         q = f"site:{m['domain']} {claim_text[:120]}"

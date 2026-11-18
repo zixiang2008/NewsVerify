@@ -35,6 +35,46 @@ async def _update_progress(job_id: str, step: str) -> None:
             await s.commit()
 
 
+def _freq_to_hours(freq: str) -> int:
+    """把提交时选择的更新频率映射为小时数；与 web 层 _interval_to_hours 保持一致。"""
+    mapping = {"6h": 6, "12h": 12, "24h": 24, "3d": 72, "week": 168}
+    return mapping.get((freq or "").lower(), 24)
+
+
+async def _ensure_subscription(event_id: str, freq: str, chat_id, text: str) -> None:
+    """落实提交时选择的“更新频率”：核查完成后据此创建/更新订阅。
+
+    过去 freq 只被写进 job.payload，worker 从未消费，导致用户以为开启了追踪
+    实际却没有订阅。这里幂等地建立订阅，避免与手动 /api/track 产生重复。
+    """
+    if not freq or freq == "none":
+        return
+    sm = get_sessionmaker()
+    iv = _freq_to_hours(freq)
+    async with sm() as s:
+        from sqlalchemy import select
+        from app.db.models import Subscription
+        res = await s.execute(
+            select(Subscription).where(
+                Subscription.event_id == event_id, Subscription.active == True  # noqa: E712
+            )
+        )
+        sub = res.scalars().first()
+        if sub:
+            sub.interval_hours = iv
+            sub.paused = False
+            sub.next_run_at = datetime.now(timezone.utc) + timedelta(hours=iv)
+        else:
+            s.add(Subscription(
+                event_id=event_id,
+                user_id=int(chat_id or 0),
+                chat_id=int(chat_id or 0),
+                interval_hours=iv,
+                next_run_at=datetime.now(timezone.utc) + timedelta(hours=iv),
+            ))
+        await s.commit()
+
+
 async def _process_check_job(job: Job, bot: Bot) -> None:
     sm = get_sessionmaker()
     settings = get_settings()
@@ -44,6 +84,7 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
     urls = payload.get("urls", []) or []
     deep = payload.get("deep", False)
     chat_id = payload.get("chat_id")
+    freq = payload.get("freq", "none")
     max_claims = settings.max_claims_per_check * (2 if deep else 1)
     max_results = settings.max_search_results * (2 if deep else 1)
 
@@ -194,7 +235,10 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
         except Exception:
             pass
 
-    # store fingerprint on any subscription? later
+    # 落实提交时选择的更新频率：核查完成后建立/更新订阅（幂等）。
+    await _ensure_subscription(event_id, freq, chat_id, text)
+
+    # store final result on the job, preserving the accumulated progress timeline.
     async with sm() as session:
         jj = await session.get(Job, job.id)
         if jj is not None:
@@ -202,14 +246,19 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
             # 媒体覆盖统计：首条主张有多少家媒体报道
             media_hits = sum(1 for x in top_media_results if x.get("hit_count"))
             total_reports = sum(int(x.get("hit_count") or 0) for x in top_media_results)
-            jj.result = {
+            # 关键修复：过去这里直接覆盖 jj.result，丢掉了 _update_progress 累积的
+            # progress 时间线，导致任务完成后弹窗里的“处理进度”变空。改为基于现有
+            # result 合并，仅覆盖最终结果字段，保留 progress。
+            res = dict(jj.result or {})
+            res.update({
                 "event_id": event_id, "claims": len(claims), "fingerprint": fp,
                 "top_media": top_media_results,
                 "top_media_by_claim": top_media_by_claim,
                 "media_hits": media_hits,
                 "total_reports": total_reports,
                 "summary": summary,
-            }
+            })
+            jj.result = res
             flag_modified(jj, "result")
             jj.finished_at = datetime.now(timezone.utc)
             await session.commit()
@@ -233,28 +282,69 @@ async def _process_subscription(sub: Subscription, bot: Bot) -> None:
         for c in claims[:3]:
             items = await collect_evidence(c.text, max_results=6)
             all_items.extend(items)
+        # 去重后的唯一来源数，作为可读摘要的一部分
+        unique_sources = len({(i.get("url") or "") for i in all_items if i.get("url")})
         fp = evidence_fingerprint(all_items)
         if fp and fp != sub.last_evidence_fingerprint and sub.last_evidence_fingerprint:
             # change detected -> notify
             from app.db.models import Notification
             content_hash = fp
+            # 可读摘要：写进 kind 字段（String(32)），前端据此显示，而不是只显示哈希。
+            readable = f"证据变化 · {unique_sources} 家来源"
             # dedup
             existing = await session.execute(
                 select(Notification).where(Notification.subscription_id == sub.id, Notification.content_hash == content_hash)
             )
             if existing.scalar_one_or_none() is None:
-                note = Notification(subscription_id=sub.id, content_hash=content_hash)
+                note = Notification(subscription_id=sub.id, content_hash=content_hash, kind=readable[:32])
                 session.add(note)
                 await session.commit()
-                if bot is not None:
-                    try:
-                        await bot.send_message(sub.chat_id, f"追踪更新：事件 {sub.event_id[:8]} 检测到新证据/结论可能变化。\n新证据条数: {len(all_items)}")
-                    except Exception:
-                        pass
+                # 多渠道推送：优先走已配置的 IM 渠道（含 Telegram / 飞书 / 钉钉等），
+                # 不再只依赖 Telegram bot.send_message(chat_id=0)——那对 web 订阅必然失败。
+                notify_text = (
+                    f"📡 追踪更新 · 事件 {sub.event_id[:8]}\n"
+                    f"{readable}\n新证据条数: {len(all_items)}"
+                )
+                await _broadcast_im(notify_text, bot if (sub.chat_id or 0) != 0 else None, sub.chat_id)
+        elif fp and not sub.last_evidence_fingerprint:
+            # 首次基线：不发“变化”通知，但记录一条“追踪已启动”，让用户有明确反馈。
+            from app.db.models import Notification
+            baseline_hash = "baseline:" + fp[:24]
+            existing = await session.execute(
+                select(Notification).where(Notification.subscription_id == sub.id, Notification.content_hash == baseline_hash)
+            )
+            if existing.scalar_one_or_none() is None:
+                session.add(Notification(subscription_id=sub.id, content_hash=baseline_hash,
+                                         kind="追踪已启动 · 建立基线"))
+                await session.commit()
         sub.last_evidence_fingerprint = fp
         sub.last_run_at = datetime.now(timezone.utc)
         sub.next_run_at = datetime.now(timezone.utc) + timedelta(hours=sub.interval_hours)
         await session.commit()
+
+
+async def _broadcast_im(text: str, bot: Bot | None, telegram_chat_id) -> None:
+    """把追踪更新推送到所有已配置的 IM 渠道；Telegram 仅在有有效 chat_id 时额外推送。"""
+    from app.integrations import registry as im_registry, IMReply
+    try:
+        await im_registry.reload_from_db()
+        for ch in im_registry.catalogue():
+            if not ch.get("configured"):
+                continue
+            channel = im_registry.get(ch["key"])
+            if not channel:
+                continue
+            try:
+                await channel.send_message("tracking", IMReply(text=text))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    if bot is not None and telegram_chat_id:
+        try:
+            await bot.send_message(telegram_chat_id, text)
+        except Exception:
+            pass
 
 
 async def run_worker() -> None:

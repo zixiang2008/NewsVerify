@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.7.1 (Source)** · 2026-11-18.
+**Self-hosted, auditable fact-checking workspace.** Version **0.7.2 (Lens)** · 2026-11-18.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -22,6 +22,11 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | English | Six systems and verdict rules |
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
+
+## What is new in 0.7.2
+
+- **Interactive Tracking Mind Map** (`🧠`): an overview of all news items, and a per-story expandable mind map (claims & verdicts, evidence, media coverage, tracking, progress, history). Readable tracking-update summaries replace bare hashes.
+- **Bug-fix pass**: the submission frequency now actually creates a subscription; the progress timeline survives completion; the "tracking" node lights up correctly; view switching no longer gets overwritten by polling; tracking alerts broadcast to all configured IM channels; fixes to Top-30 queries, recheck, v1 track de-duplication and modal escaping.
 
 ## What is new in 0.7.1
 
