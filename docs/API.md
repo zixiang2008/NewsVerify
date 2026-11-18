@@ -30,6 +30,13 @@ Auth: header `X-API-Key: <key>` or query `?api_key=<key>`.
 - `GET /api/admin/channels/{key}/qrcode` — binding QR (SVG) from the official deep link
 - `GET /api/admin/channels/{key}/bind-status` — poll whether scan-and-bind completed
 - `POST /api/admin/channels/{key}/test` — send a real test message in the platform's native format
+- `POST /api/mindmap/share` — create an anonymous read-only mind-map snapshot; body `{"event_id","model","layout"}`; returns `{"token","url"}`
+- `DELETE /api/mindmap/share/{token}` — revoke a share link (PIN required)
+
+## Public mind-map sharing
+- `GET /share/{token}` — public read-only mind-map page (layout/theme switch, SVG/PNG export)
+- `GET /api/mindmap/share/{token}` — snapshot JSON (`model`, `layout`, `created_at`, `views`)
+- `GET /api/mindmap/share/{token}/qrcode` — QR code as SVG for the share URL
 
 ## Pages
 - `/` — verification console

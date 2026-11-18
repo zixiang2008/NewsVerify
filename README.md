@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.7.2 (Lens)** · 2026-11-18.
+**Self-hosted, auditable fact-checking workspace.** Version **0.7.3 (Canvas)** · 2026-11-19.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -22,6 +22,11 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | English | Six systems and verdict rules |
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
+
+## What is new in 0.7.3
+
+- **Real connected mind maps**: SVG bezier links with arrowheads run from each news item to six dimensions and on to claims, sources and records. Three switchable layouts — tree, waterfall and radial — persist locally.
+- **A map behind every story**: each news card shows its own mini map; the detail modal embeds the full interactive map. Maps can be shared as anonymous read-only links with a QR code, or exported as SVG / PNG.
 
 ## What is new in 0.7.2
 

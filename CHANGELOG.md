@@ -1,8 +1,18 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.7.2 (Lens, 2026-11-18)**.
+All notable changes to NewsVerify are documented here. The current version is **0.7.3 (Canvas, 2026-11-19)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.7.3 — Canvas (2026-11-19)
+
+- Rebuilt the mind map as a real graph: a central news node connects via coloured SVG bezier links (with arrowheads) to six dimensions and then to individual claims, sources and records. The old card stack had no visible connectors.
+- Added three switchable layouts — **tree** (left→right), **waterfall** (top→down) and **radial** (circular) — with local persistence; the same engine powers the console, the per-news detail map and the public share page.
+- Every news card now carries its own mini mind map directly behind it; clicking it opens that news item's full six-dimension map. The event detail modal also embeds an interactive map.
+- Added mind-map sharing: an anonymous read-only snapshot link plus QR code; recipients need no login and can switch layout/theme and download SVG or PNG.
+- Toolbar: expand/collapse branches, zoom, layout switch, share, SVG/PNG export, plus a six-colour legend and short reading hint.
+- Fixed the old expand/collapse state logic (it worked in reverse) and the zero-height pseudo-element that made connections invisible.
+- Full-chain re-verification: Python compilation, rendered-JS syntax, three-layout geometry/link generation, share-page script, API routes and public access paths.
 
 ## 0.7.2 — Lens (2026-11-18)
 

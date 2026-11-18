@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.7.2 (Lens) · **Release date:** 2026-11-18  
+**Version:** 0.7.3 (Canvas) · **Release date:** 2026-11-19  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -258,6 +258,14 @@ For every release:
   - **Styling**: pure CSS variables (dotted canvas, gradient root, state-coloured borders) that adapt to all 9 themes, with no external dependency.
 - **Readable tracking updates**: `Notification.kind` now stores summaries such as "evidence change · N sources" / "tracking started · baseline", shown in the UI instead of a bare 64-character hash.
 - **Bug fixes**: see CHANGELOG v0.7.2 — subscription creation from `freq`, progress preservation, list tracking-node state, polling cleanup, multi-channel tracking notifications, Top-30 emptiness check, recheck original text, v1 track de-duplication and modal escaping.
+
+### 7.10 New in v0.7.3 — Connected mind maps, three layouts and sharing
+
+- **Link engine**: `app/web/mindmap_asset.py` holds shared CSS/JS. A model built from `/api/events/{id}` data (root → six branches → leaves) is turned into absolutely positioned nodes plus SVG cubic bezier links, coloured per branch and tipped with arrowheads — fixing the v0.7.2 bug where the connector pseudo-element had zero height and nothing was visibly connected.
+- **Three layouts**: tree (left→right, for reading claim by claim), waterfall (top→down, for pipeline and timelines) and radial (circular, for the whole relationship graph). The toolbar persists the choice in `localStorage`; overview, embedded detail map, standalone map and share page reuse one model and one renderer.
+- **A map for every story**: `renderEvents()` calls `mmRenderMinis()` so each task card carries a four-branch mini map; clicking it opens the full six-branch map. The detail modal embeds an interactive map via `mmRenderInlineDetail()` while keeping polling view isolation.
+- **Sharing**: `POST /api/mindmap/share` stores a snapshot in `mindmap_shares` and returns a random token URL. `GET /share/{token}` is a public read-only page (layout/theme switching, SVG/PNG export) with a segno QR code. Shared content is a static snapshot containing no admin credentials; the delete endpoint revokes a link. The middleware allows only the share page and snapshot GET through without PIN.
+- **Readability**: six-colour legend, branch icons, short reading hints, expand/collapse and zoom. SVG and 2× PNG exports are generated locally with no external dependency.
 
 ---
 

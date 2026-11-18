@@ -13,6 +13,7 @@ from app.integrations import registry as im_registry, CHANNEL_CATALOGUE
 from app.integrations import IMMessage, IMReply
 from app.integrations.guides import CHANNEL_GUIDES, public_catalogue
 from app.integrations import channel_store
+from app.web.mindmap_asset import CSS as MM_CSS, JS as MM_JS, share_page as mm_share_page
 from fastapi import Depends, HTTPException
 
 def verify_api_key(request: Request):
@@ -118,6 +119,11 @@ loadCfg();loadChannels();
 async def pin_auth(request: Request, call_next):
     path = request.url.path
     if path in ("/login", "/health") or path.startswith("/static") or path.startswith("/api/v1"):
+        return await call_next(request)
+    # 脑图分享页与分享快照接口公开可访问（静态快照，不含后台凭证）
+    if path.startswith("/share/") or (
+        path.startswith("/api/mindmap/share/") and request.method == "GET"
+    ):
         return await call_next(request)
     # 理论来源页公开可访问；后台管理走独立 PIN 会话
     if path.startswith("/theory") or path in ("/admin/login", "/api/admin/login"):
@@ -431,6 +437,103 @@ async def api_version():
     payload = version_payload()
     payload["top_media_count"] = len(TOP_MEDIA)
     return payload
+
+
+@app.post("/api/mindmap/share")
+async def api_mindmap_share(request: Request):
+    """Create an anonymous read-only snapshot of a news mind map."""
+    import secrets
+    from app.db.models import MindmapShare, now_utc
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    model = body.get("model")
+    if not isinstance(model, dict) or not isinstance(model.get("root"), dict):
+        return JSONResponse({"error": "missing mind-map model"}, status_code=400)
+    if len(json.dumps(model, ensure_ascii=False)) > 300_000:
+        return JSONResponse({"error": "mind map too large"}, status_code=400)
+    token = secrets.token_urlsafe(12)
+    layout = str(body.get("layout") or "tree")
+    if layout not in ("tree", "waterfall", "radial"):
+        layout = "tree"
+    sm = get_sessionmaker()
+    async with sm() as session:
+        session.add(MindmapShare(token=token, event_id=str(body.get("event_id") or ""),
+                                 model=model, layout=layout, created_at=now_utc()))
+        await session.commit()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
+    return {"ok": True, "token": token, "url": f"{proto}://{host}/share/{token}"}
+
+
+async def _get_share(token: str):
+    from sqlalchemy import select
+    from app.db.models import MindmapShare
+    sm = get_sessionmaker()
+    async with sm() as session:
+        rec = (await session.execute(select(MindmapShare).where(MindmapShare.token == token))).scalar_one_or_none()
+        if not rec:
+            return None
+        return {"model": rec.model or {}, "layout": rec.layout or "tree",
+                "created_at": rec.created_at.isoformat() if rec.created_at else "",
+                "event_id": rec.event_id, "views": rec.views}
+
+
+@app.get("/api/mindmap/share/{token}")
+async def api_mindmap_share_get(token: str):
+    rec = await _get_share(token)
+    if not rec:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return rec
+
+
+@app.get("/api/mindmap/share/{token}/qrcode")
+async def api_mindmap_share_qr(token: str, request: Request):
+    rec = await _get_share(token)
+    if not rec:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
+    url = f"{proto}://{host}/share/{token}"
+    try:
+        import io
+        import segno
+        qr = segno.make(url, error="m")
+        buf = io.BytesIO()
+        qr.save(buf, kind="svg", scale=5, border=2, dark="#0b1220", light="#ffffff")
+        return HTMLResponse(buf.getvalue().decode("utf-8"), media_type="image/svg+xml")
+    except Exception as exc:
+        return JSONResponse({"error": f"QR 生成失败：{exc}"}, status_code=500)
+
+
+@app.delete("/api/mindmap/share/{token}")
+async def api_mindmap_share_delete(token: str):
+    from sqlalchemy import delete
+    from app.db.models import MindmapShare
+    sm = get_sessionmaker()
+    async with sm() as session:
+        result = await session.execute(delete(MindmapShare).where(MindmapShare.token == token))
+        await session.commit()
+    return {"ok": result.rowcount > 0}
+
+
+@app.get("/share/{token}", response_class=HTMLResponse)
+async def mindmap_share_page(token: str):
+    from sqlalchemy import select
+    from app.db.models import MindmapShare
+    rec = await _get_share(token)
+    if not rec:
+        return HTMLResponse("<h1 style='font-family:sans-serif;padding:40px'>脑图分享链接不存在或已撤销</h1>",
+                            status_code=404)
+    sm = get_sessionmaker()
+    async with sm() as session:
+        row = (await session.execute(select(MindmapShare).where(MindmapShare.token == token))).scalar_one_or_none()
+        if row:
+            row.views = (row.views or 0) + 1
+            await session.commit()
+    return HTMLResponse(mm_share_page(rec, token, rec["created_at"]))
 
 
 @app.get("/api/events")
@@ -1244,49 +1347,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--muted);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* ==== v0.7.2 追踪脑图（可展开思维导图）==== */
-.mm-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
-.mm-canvas{position:relative;overflow:auto;background:
-  radial-gradient(circle at 1px 1px,var(--border) 1px,transparent 0) 0 0/22px 22px,
-  var(--surface-0);border:1px solid var(--border);border-radius:14px;padding:18px;min-height:280px;max-height:62vh}
-.mm{flex:none;position:relative;display:flex;flex-direction:column;align-items:center;gap:0}
-.mm-root{background:linear-gradient(135deg,var(--accent),var(--accent2));color:var(--on-accent);
-  border-radius:14px;padding:12px 20px;font-weight:800;font-size:14px;box-shadow:var(--shadow);
-  max-width:360px;text-align:center;line-height:1.4;cursor:pointer;user-select:none}
-.mm-root .mm-sub{display:block;font-size:10px;font-weight:500;opacity:.85;margin-top:3px}
-.mm-branches{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-top:22px;position:relative}
-.mm-branches:before{content:'';position:absolute;top:-22px;left:50%;width:2px;height:22px;background:var(--border)}
-.mm-branch{position:relative;display:flex;flex-direction:column;align-items:center;min-width:150px;max-width:280px}
-.mm-branch:before{content:'';position:absolute;top:0;left:50%;width:2px;height:0;background:var(--border)}
-.mm-node{background:var(--card);border:1.5px solid var(--border);border-radius:11px;padding:9px 12px;
-  font-size:12px;color:var(--text);cursor:pointer;user-select:none;transition:.15s;
-  box-shadow:0 3px 10px rgba(0,0,0,.12);max-width:100%;text-align:center}
-.mm-node:hover{border-color:var(--accent);transform:translateY(-1px)}
-.mm-node .mm-t{font-weight:700;display:flex;align-items:center;gap:6px;justify-content:center}
-.mm-node .mm-m{color:var(--muted);font-size:10px;margin-top:3px}
-.mm-node.done{border-color:var(--ok);background:var(--reported-bg)}
-.mm-node.active{border-color:var(--accent);background:rgba(56,189,248,.08)}
-.mm-node.fail{border-color:var(--bad)}
-.mm-node.lit{border-color:var(--accent3)}
-.mm-kids{margin-top:16px;display:flex;flex-direction:column;gap:8px;width:100%;align-items:center}
-.mm-leaf{width:100%;background:var(--surface-1);border:1px solid var(--border);border-radius:9px;
-  padding:7px 10px;font-size:11px;line-height:1.5;color:var(--text);text-align:left}
-.mm-leaf a{color:var(--accent);text-decoration:none}
-.mm-leaf a:hover{text-decoration:underline}
-.mm-leaf .mm-lb{color:var(--muted);font-size:10px}
-.mm-badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:999px;font-weight:700;margin-left:4px}
-.mm-badge.b-done{background:rgba(34,197,94,.18);color:var(--ok-text)}
-.mm-badge.b-active{background:rgba(56,189,248,.18);color:var(--accent-soft)}
-.mm-badge.b-fail{background:rgba(239,68,68,.18);color:var(--bad-text)}
-.mm-badge.b-track{background:rgba(167,139,250,.2);color:var(--accent2-soft)}
-.mm-hint{font-size:10px;color:var(--muted);margin:6px 0}
-.mm-overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:10px}
-.mm-ov-card{background:var(--surface-0);border:1px solid var(--border);border-radius:12px;padding:12px;cursor:pointer;transition:.15s}
-.mm-ov-card:hover{border-color:var(--accent);transform:translateY(-1px)}
-.mm-ov-card .ov-t{font-weight:700;font-size:12px;color:var(--text);line-height:1.4}
-.mm-ov-card .ov-m{color:var(--muted);font-size:10px;margin-top:6px}
-.mm-progress{height:4px;border-radius:999px;background:var(--border);margin-top:8px;overflow:hidden}
-.mm-progress>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent3))}
+__MM_CSS__
 
 /* system status panel */
 .sys-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -2033,13 +2094,21 @@ function renderEvents(){
         ${lastStep?`<div class="meta"><span style="color:var(--accent)">▸ ${esc(lastStep.step)}</span></div>`:''}
         <div class="nodes">${chips}</div>
         ${summary?`<div class="note" style="margin-top:6px">${summary}</div>`:''}
+        <div class="mm-mini-wrap">
+          <div class="mm-mini-head"><span>🧠 本条新闻的专属脑图</span>
+            <span style="cursor:pointer;color:var(--accent)" onclick="event.stopPropagation();showMindmap('${e.id}')">展开完整脑图 ↗</span></div>
+          <div id="mmmini-${e.id}" onclick="event.stopPropagation();showMindmap('${e.id}')"
+               title="点击打开该新闻的六维度连线脑图"></div>
+        </div>
         <div class="card-actions">
+          <button class="mini-btn" onclick="event.stopPropagation();showMindmap('${e.id}')" title="查看这条新闻的完整脑图">🧠 脑图</button>
           <button class="mini-btn track" onclick="event.stopPropagation();showTrackStatus('${e.id}')" title="查看该新闻的追踪状态与所有更新汇总">📡 追踪状态</button>
           <button class="mini-btn setting" onclick="event.stopPropagation();showTrackSettings('${e.id}')" title="修改追踪约定、频率与时间">⚙️ 设置</button>
         </div>
       </div>`;
     }catch(err){ console.error('renderEvents item',err,e); return ''; }
   }).join('');
+  mmRenderMinis();
 }
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function saveTitle(id,el){
@@ -2170,6 +2239,11 @@ async function showDetail(id){
   } else {
     html+=`<p class="note">未开启追踪</p>`;
   }
+  html+=`<h3>🧠 本条新闻的专属脑图（连线版）</h3>`;
+  html+=`${mmToolbar(d.id,false)}
+    <button class="mini-btn" onclick="showMindmap('${d.id}')">⛶ 全屏脑图</button>`;
+  html+=`<div id="mm-inline-canvas"></div>`;
+  html+=`<div class="mm-hint">💡 中心为该新闻，六条彩色连线分别通向主张、证据、媒体、追踪、进度与历史；点击分支可展开/收起。</div>`;
   html+=`<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
     <button class="mini-btn" onclick="showMindmap('${d.id}')">🧠 脑图视图</button>
     <button class="mini-btn track" onclick="showTrackStatus('${d.id}')">📡 追踪状态汇总</button>
@@ -2183,6 +2257,7 @@ async function showDetail(id){
   </div>`;
   document.getElementById('modalContent').innerHTML=html;
   document.getElementById('modalBg').style.display='flex';
+  mmRenderInlineDetail(d);
   // 任务进行中时自动刷新弹窗，实时展示节点与结果。
   // 关键：记录当前视图为 detail，轮询回调仅在仍停留在 detail 视图时才刷新，
   // 否则用户切到追踪状态/设置/脑图后会被强制覆盖回去。
@@ -2333,152 +2408,7 @@ async function showTrackSettings(id){
   document.getElementById('modalBg').style.display='flex';
 }
 
-// ===== v0.7.2 追踪脑图：可展开思维导图 =====
-let _mmExpanded={};   // 记录分支展开状态： key -> bool
-function mmToggle(key){
-  _mmExpanded[key]=!_mmExpanded[key];
-  const box=document.getElementById('mm-kids-'+key);
-  if(box) box.style.display=_mmExpanded[key]?'flex':'none';
-  const arrow=document.getElementById('mm-arrow-'+key);
-  if(arrow) arrow.textContent=_mmExpanded[key]?'▾':'▸';
-}
-function mmWrap(key,title,meta,cls,childrenHtml,defaultOpen){
-  const open=_mmExpanded[key]!==undefined?_mmExpanded[key]:!!defaultOpen;
-  _mmExpanded[key]=open;
-  return `<div class="mm-branch">
-    <div class="mm-node ${cls||''}" onclick="mmToggle('${key}')" title="点击展开/收起">
-      <div class="mm-t"><span id="mm-arrow-${key}">${open?'▾':'▸'}</span>${title}</div>
-      ${meta?`<div class="mm-m">${meta}</div>`:''}
-    </div>
-    <div class="mm-kids" id="mm-kids-${key}" style="display:${open?'flex':'none'}">${childrenHtml||''}</div>
-  </div>`;
-}
-function mmLeaf(body){return `<div class="mm-leaf">${body}</div>`;}
-
-// 全景脑图：所有新闻任务的概览（可点击进入单条脑图）
-async function showMindmap(eventId){
-  stopDetailPoll(); _modalView='mindmap'; _modalEventId=eventId||null;
-  if(eventId){ return showEventMindmap(eventId); }
-  const data=Array.isArray(allEvents)?allEvents:[];
-  let html=`<h2>🧠 追踪脑图 · 全景 <span class="badge">${data.length} 条新闻</span></h2>`;
-  html+=`<div class="sub">每张卡片是一条新闻核查链路。点击进入可展开其主张、证据、媒体覆盖与追踪更新的完整脑图。</div>`;
-  if(!data.length){ html+=`<div class="note">暂无任务。提交一条新闻后即可在这里看到全景脑图。</div>`; }
-  else{
-    html+=`<div class="mm-overview-grid">`;
-    for(const e of data){
-      const st=e.job_status||e.status||'unknown';
-      const jr=e.job_result||{};
-      const claims=(e.claims||[]).length;
-      const hits=jr.media_hits||0;
-      const verdict=(e.verdicts||[])[0];
-      const subs=e.active_subs||0;
-      const done=st==='done',run=(st==='running'||st==='queued');
-      const badge=subs?'<span class="mm-badge b-track">追踪中</span>':(done?'<span class="mm-badge b-done">已完成</span>':(run?'<span class="mm-badge b-active">进行中</span>':''));
-      const pct=done?100:(run?45:0);
-      html+=`<div class="mm-ov-card" onclick="showMindmap('${e.id}')">
-        <div class="ov-t">${esc((e.title||'').slice(0,46))}</div>
-        <div class="ov-m">${verdict?esc(verdict.label)+' · ':''}主张 ${claims} · 媒体 ${hits}/30 ${badge}</div>
-        <div class="mm-progress"><i style="width:${pct}%"></i></div>
-      </div>`;
-    }
-    html+=`</div>`;
-  }
-  document.getElementById('modalContent').innerHTML=html;
-  document.getElementById('modalBg').style.display='flex';
-}
-
-// 单条新闻脑图：以新闻为中心，向四周展开六大维度
-async function showEventMindmap(id){
-  let d;
-  try{ const r=await fetch('/api/events/'+id); d=await r.json(); }catch(e){}
-  if(!d||!d.id){ alert('事件不存在'); return; }
-  if(_modalView!=='mindmap') return;   // 切换视图后放弃渲染
-  d.claims=d.claims||[]; d.jobs=d.jobs||[];
-  d.subscriptions=d.subscriptions||[]; d.notifications=d.notifications||[];
-  const jr=(d.jobs[0]&&d.jobs[0].result)||{};
-  const st=(d.jobs[0]&&d.jobs[0].status)||d.status||'unknown';
-  const done=st==='done',run=(st==='running'||st==='queued');
-
-  // 分支1：主张与判定
-  let claimsHtml='';
-  d.claims.forEach((c,i)=>{
-    const v=c.verdict;
-    const vb=v?`<span class="mm-badge ${v.label==='supported'?'b-done':(v.label==='refuted'?'b-fail':'b-active')}">${esc(v.label)}</span>`:'';
-    const evN=(c.evidence||[]).length;
-    claimsHtml+=mmLeaf(`<b>${i+1}. ${esc((c.text||'').slice(0,90))}</b> ${vb}<br><span class="mm-lb">证据 ${evN} 条${v?' · 置信度 '+(v.confidence*100).toFixed(0)+'%':''}</span>`);
-  });
-  const bClaims=mmWrap('claims','🔬 主张与判定',`${d.claims.length} 条原子主张`,done?'done':(run?'active':''),claimsHtml||mmLeaf('<span class="mm-lb">尚未拆分主张</span>'),true);
-
-  // 分支2：证据来源（列出去重后的来源域名/标题）
-  let eviHtml=''; const seen=new Set();
-  d.claims.forEach(c=>(c.evidence||[]).forEach(ev=>{
-    const k=ev.url||ev.domain;
-    if(!k||seen.has(k))return; seen.add(k);
-    const rank=ev.media_rank?`第 ${ev.media_rank} 名`:'非榜单来源';
-    eviHtml+=mmLeaf(`<a href="${esc(ev.url||'')}" target="_blank">↗ ${esc((ev.title||ev.domain||'来源').slice(0,44))}</a><br><span class="mm-lb">${esc(ev.media_name||ev.domain||'')} · ${rank}</span>`);
-  }));
-  const bEvi=mmWrap('evidence','📚 证据与溯源',`${seen.size} 个独立来源`,'lit',eviHtml||mmLeaf('<span class="mm-lb">暂无证据</span>'),false);
-
-  // 分支3：媒体覆盖（Top30 点亮统计）
-  let mediaHtml='';
-  if(d.top_media&&d.top_media.length){
-    const lit=d.top_media.filter(m=>Number(m.hit_count||0)>0);
-    mediaHtml+=mmLeaf(`<b>${lit.length} / ${d.top_media.length} 家媒体报道</b> · 共 ${d.total_reports||0} 条来源`);
-    if(lit.length) mediaHtml+=mmLeaf(`<span class="mm-lb">${lit.slice(0,12).map(m=>esc(m.name)).join('、')}${lit.length>12?' 等':''}</span>`);
-  } else mediaHtml=mmLeaf('<span class="mm-lb">尚未进行媒体交叉核查</span>');
-  const bMedia=mmWrap('media','🌐 媒体覆盖',`${d.media_hits||0}/30 家`,d.media_hits?'lit':'',mediaHtml,true);
-
-  // 分支4：追踪状态与更新
-  const active=d.subscriptions.filter(s=>s.active&&!s.paused);
-  let trackHtml=mmLeaf(`<b>${active.length?('🟢 追踪中 · 间隔 '+active[0].interval_hours+'h'):'⚪ 未开启追踪'}</b>`);
-  if(active.length&&active[0].next_run_at) trackHtml+=mmLeaf(`<span class="mm-lb">下次检查 ${new Date(active[0].next_run_at).toLocaleString()}</span>`);
-  (d.notifications||[]).slice(0,8).forEach(n=>{
-    const base=(n.content_hash||'').startsWith('baseline:');
-    trackHtml+=mmLeaf(`🔸 ${esc(n.kind&&n.kind!=='update'?n.kind:(base?'追踪已启动':'检测到更新'))}<br><span class="mm-lb">${n.created_at?new Date(n.created_at).toLocaleString():''}</span>`);
-  });
-  const bTrack=mmWrap('track','📡 持续追踪',`${d.notifications.length} 条更新`,active.length?'lit':'',trackHtml,true);
-
-  // 分支5：处理进度（时间线）
-  let progHtml='';
-  const prog=(jr.progress||[]);
-  if(prog.length) prog.forEach(p=>{ progHtml+=mmLeaf(`⏱ ${p.time?new Date(p.time).toLocaleTimeString():''} · ${esc(p.step)}`); });
-  else progHtml=mmLeaf('<span class="mm-lb">暂无进度记录</span>');
-  const bProg=mmWrap('progress','⏳ 处理进度',`${prog.length} 个步骤`,done?'done':(run?'active':''),progHtml,false);
-
-  // 分支6：任务历史
-  let histHtml='';
-  d.jobs.forEach(j=>{
-    histHtml+=mmLeaf(`<b>${esc(j.kind)}</b> · ${esc(j.status)}${j.attempts>1?' · '+j.attempts+' 次':''}<br><span class="mm-lb">${j.finished_at?new Date(j.finished_at).toLocaleString():''}</span>`);
-  });
-  const bHist=mmWrap('history','🗂 任务历史',`${d.jobs.length} 次执行`,'',histHtml||mmLeaf('<span class="mm-lb">无历史</span>'),false);
-
-  const verdict=(d.claims.find(c=>c.verdict)||{}).verdict;
-  let html=`<h2>🧠 核查链路脑图 <span class="badge">${id.slice(0,8)}</span></h2>`;
-  html+=`<div class="sub">${esc(d.title)}</div>`;
-  html+=`<div class="mm-toolbar">
-    <button class="mini-btn" onclick="mmExpandAll(true)">⊞ 全部展开</button>
-    <button class="mini-btn" onclick="mmExpandAll(false)">⊟ 全部收起</button>
-    <button class="mini-btn" onclick="showMindmap()">← 返回全景</button>
-    <button class="mini-btn" onclick="showDetail('${id}')">📄 事件详情</button>
-  </div>`;
-  html+=`<div class="mm-canvas"><div class="mm">
-    <div class="mm-root" onclick="showDetail('${id}')" title="点击查看事件详情">
-      📰 ${esc(d.title.slice(0,26))}
-      <span class="mm-sub">${verdict?esc(verdict.label)+' · ':'已核查 · '}${d.claims.length} 主张 · ${d.media_hits||0}/30 媒体${active.length?' · 追踪中':''}</span>
-    </div>
-    <div class="mm-branches">${bClaims}${bEvi}${bMedia}${bTrack}${bProg}${bHist}</div>
-  </div></div>`;
-  html+=`<div class="mm-hint">💡 点击任意节点可展开/收起其下级；点击根节点或“事件详情”查看完整原文与来源。</div>`;
-  document.getElementById('modalContent').innerHTML=html;
-  document.getElementById('modalBg').style.display='flex';
-}
-function mmExpandAll(open){
-  Object.keys(_mmExpanded).forEach(k=>{
-    _mmExpanded[k]=open;
-    const box=document.getElementById('mm-kids-'+k); if(box) box.style.display=open?'flex':'none';
-    const arrow=document.getElementById('mm-arrow-'+k); if(arrow) arrow.textContent=open?'▾':'▸';
-  });
-}
+__MM_JS__
 
 async function saveTrackSettings(id,hasSub){
   const payload={
@@ -2531,4 +2461,6 @@ setInterval(loadSystem,30000);
             .replace("__RELEASE_DATE__", RELEASE_DATE)
             .replace("__CODENAME__", CODENAME)
             .replace("__TOP_MEDIA_COUNT__", str(len(TOP_MEDIA)))
+            .replace("__MM_CSS__", MM_CSS)
+            .replace("__MM_JS__", MM_JS)
     )

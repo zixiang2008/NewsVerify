@@ -163,6 +163,19 @@ class IMChannelConfig(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 
+class MindmapShare(Base):
+    """Anonymous, read-only snapshot of a news mind map shared by link."""
+
+    __tablename__ = "mindmap_shares"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    model: Mapped[dict] = mapped_column(JSON, default=dict)
+    layout: Mapped[str] = mapped_column(String(16), default="tree")
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class RatingSnapshot(Base):
     __tablename__ = "rating_snapshots"
 

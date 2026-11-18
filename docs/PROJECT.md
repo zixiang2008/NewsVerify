@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.7.2（Lens） · 文档更新：2026-11-18
+> 软件版本：0.7.3（Canvas） · 文档更新：2026-11-19
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.7.2）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.7.3）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -443,3 +443,15 @@ $DOCKER compose logs -f bot worker
   - 全新 `.mm-*` CSS：点阵画布、渐变根节点、状态色边框，全部用主题 CSS 变量，自动适配 9 套主题；纯前端零依赖。
   - 三个入口：任务历史面板「🧠 追踪脑图」按钮、事件详情弹窗、追踪状态弹窗。
 - **验证**：`py_compile` 全通过；运行时 HTML 脚本 `node --check` 通过；onclick 引用函数完整性检查通过（无未定义函数）。
+
+
+### 13.11 v0.7.3：连线脑图、三布局与分享
+
+- **需求**：用户要求「每一个最终脑图再优化」——旧脑图没有连线；布局风格要能切换至少三种；方便人理解；每条新闻后面有对应脑图；支持脑图分享；并要求全面跑一遍代码、确认软件目标功能全部实现、做完整链条检查。
+- **新文件**：`app/web/mindmap_asset.py`，集中托管脑图 CSS/JS（控制台与公开分享页共用同一渲染器，零外部依赖）。
+- **连线几何**：模型为 root → 六分支 → 叶子，`mmGeometry()` 计算绝对坐标，`mmEdge()` 求矩形边界交点，`mmPath()` 按布局生成三次贝塞尔曲线；SVG `<marker>` 画箭头，分支按主题色着色。彻底修复旧实现 `.mm-branch:before{height:0}` 导致完全没有可见连线的问题。
+- **三布局**：`tree`（左→右）、`waterfall`（上→下）、`radial`（环形扩散）；工具栏切换 + `localStorage` 持久化；`_mmRenderCache` 按容器缓存模型，切换布局/缩放/展开状态时重绘不丢数据。
+- **每条新闻专属脑图**：`renderEvents()` 后调用 `mmRenderMinis()`，在每张任务卡片内渲染 4 分支迷你脑图；`showMindmap(id)` 打开六分支全图；`showDetail()` 内嵌 `mmRenderInlineDetail()` 的可交互脑图。展开/收起状态修复为 `open=true` 即显示子节点。
+- **分享链**：`MindmapShare` 表（token/event_id/model JSON/layout/views/created_at）；`POST /api/mindmap/share` 建快照，`GET /share/{token}` 公开只读页（布局/主题/导出），`GET /api/mindmap/share/{token}/qrcode` 生成 segno 二维码，`DELETE` 撤销。中间件只对分享页和快照 GET 放行，写接口与其余 API 仍需 PIN。
+- **导出**：`mmBuildSVG()` 从同一几何数据生成独立 SVG（文字自动折行），PNG 通过 SVG→Image→Canvas 生成 2 倍分辨率图，全部本地完成。
+- **验证**：`py_compile`；渲染后首页单 `<script>` 68699 字符 `node --check` 通过；分享页脚本 `node --check` 通过；三布局几何测试（16 节点 / 15 连线）与迷你脑图（5 节点 / 4 连线）通过；分享接口与公开路径端到端验证。
