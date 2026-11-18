@@ -234,8 +234,10 @@ function mmGeometry(model,layout,mini,stateKey){
   if(layout==='radial'&&!mini){
     const n=Math.max(1,branches.length),R1=205;
     let maxKids=0;branches.forEach(b=>{maxKids=Math.max(maxKids,kidsOf(b).length);});
-    const R2=340+Math.max(0,maxKids-6)*26;
-    const W=Math.max(980,2*(R2+S.leaf[0]/2+40)),H=W,cx=W/2,cy=H/2;
+    /* Many leaves are spread over concentric rings so labels never pile up. */
+    const perRing=6,rings=Math.max(1,Math.ceil(maxKids/perRing));
+    const R2=450,Rmax=R2+(rings-1)*110;
+    const W=Math.max(980,2*(Rmax+S.leaf[0]/2+40)),H=W,cx=W/2,cy=H/2;
     Object.assign(root,{cx:cx,cy:cy});pushNode(root);
     branches.forEach((b,i)=>{
       const ang=-Math.PI/2+i*2*Math.PI/n;
@@ -244,9 +246,12 @@ function mmGeometry(model,layout,mini,stateKey){
       bn.cx=cx+R1*Math.cos(ang);bn.cy=cy+R1*Math.sin(ang);link(root,bn,i);
       const kids=kidsOf(b),span=(2*Math.PI/n)*.82;
       kids.forEach((k,j)=>{
-        const a=kids.length===1?ang:(ang-span/2+j*span/(kids.length-1));
+        const ring=Math.floor(j/perRing),idx=j%perRing;
+        const cnt=Math.min(perRing,kids.length-ring*perRing);
+        const a=kids.length===1?ang:(ang-span/2+(idx+.5)*span/cnt);
+        const rr=R2+ring*110;
         const kn=pushNode({id:'b'+i+'k'+j,kind:'leaf',data:k,color:i,w:S.leaf[0],h:S.leaf[1]});
-        kn.cx=cx+R2*Math.cos(a);kn.cy=cy+R2*Math.sin(a);link(bn,kn,i,true);
+        kn.cx=cx+rr*Math.cos(a);kn.cy=cy+rr*Math.sin(a);link(bn,kn,i,true);
       });
     });
     return {nodes:nodes,paths:paths,width:W,height:H,layout:layout};
