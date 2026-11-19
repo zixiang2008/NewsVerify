@@ -117,6 +117,7 @@ async function loadKeys(){const d=await(await fetch('/api/admin/api-keys')).json
    <button class="nvds-copy" onclick="toggleKey('${esc(k.key)}',${!k.enabled})">${k.enabled?'停用':'启用'}</button>
    <button class="nvds-copy" onclick="delKey('${esc(k.key)}')">删除</button></td></tr>`).join('');
   if(!$('testKey').value&&d.keys.length)$('testKey').value=d.keys[0].key;
+  nvCopyEls('#keyTable .nvds-copy');
   renderSamples();
 }
 async function createKey(){const body={name:$('kName').value||'新 Key',scopes:Array.from(document.querySelectorAll('input[name=kScope]:checked')).map(x=>x.value)};

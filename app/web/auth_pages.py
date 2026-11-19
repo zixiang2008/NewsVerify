@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 from app.web.design import page_shell
 
 _ERRORS = {
@@ -71,7 +73,7 @@ def register_page(version: str, prefill: str = "", note: str = "") -> str:
   </div>
   <div class="nvds-field">
     <label class="nvds-label" for="c">邀请码 <span>6 位数字</span></label>
-    <input class="nvds-input center" id="c" name="code" inputmode="numeric" pattern="[0-9]{{6}}" maxlength="6" placeholder="••••••" value="{prefill}" required />
+    <input class="nvds-input center" id="c" name="code" inputmode="numeric" pattern="[0-9]{{6}}" maxlength="6" placeholder="••••••" value="{escape(prefill, quote=True)}" required />
     <div class="nvds-hint">邀请码由超级管理员生成并分享，每个码有独立的使用次数与有效期。</div>
   </div>
   <button class="nvds-btn block" type="submit">创建账号 →</button>
