@@ -108,6 +108,10 @@ async def _load_im_channels():
     except Exception as exc:
         print("admin seed failed:", exc)
     try:
+        app.state.public_base_url = (await get_api_settings()).get("public_base_url", "") or ""
+    except Exception:
+        pass
+    try:
         await im_registry.reload_from_db()
     except Exception:
         pass
@@ -303,6 +307,16 @@ async def admin_get_config():
     }
 
 
+def _public_base(request: Request) -> str:
+    """Prefer the admin-configured public URL, then proxy headers, then direct URL."""
+    configured = (getattr(request.app.state, "public_base_url", "") or "").strip()
+    if configured:
+        return configured.rstrip("/")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto.split(',')[0].strip()}://{host}"
+
+
 @app.get("/admin/accounts", response_class=HTMLResponse)
 async def admin_accounts_page():
     return HTMLResponse(accounts_page(VERSION))
@@ -355,7 +369,7 @@ async def admin_invites_generate(request: Request):
         max_uses=int(body.get("max_uses", 1)),
         expires_days=int(body.get("expires_days") or 0),
     )
-    base = str(request.base_url).rstrip("/")
+    base = _public_base(request)
     sm = get_sessionmaker()
     async with sm() as session:
         for code in data["codes"]:
@@ -425,8 +439,8 @@ async def admin_api_key_create(request: Request):
     async with sm() as session:
         session.add(ApiKey(key=key, name=name, scopes=scopes, enabled=True, created_by=_admin_user(request)))
         await session.commit()
-    base = str(request.base_url).rstrip("/")
-    return {"ok": True, "key": key, "name": name, "scopes": scopes, "base_url": base}
+    return {"ok": True, "key": key, "name": name, "scopes": scopes,
+            "base_url": _public_base(request)}
 
 
 @app.patch("/api/admin/api-keys/{key}")
@@ -483,6 +497,8 @@ async def admin_api_settings_put(request: Request):
             rec.value = {"value": value}
             rec.updated_by = _admin_user(request)
         await session.commit()
+    if "public_base_url" in body:
+        app.state.public_base_url = str(body["public_base_url"] or "").strip()
     return {"ok": True, "settings": await get_api_settings()}
 
 
