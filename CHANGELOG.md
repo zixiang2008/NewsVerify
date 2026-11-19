@@ -1,8 +1,19 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.7.3 (Canvas, 2026-11-19)**.
+All notable changes to NewsVerify are documented here. The current version is **0.8.0 (Vault, 2026-11-19)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.8.0 — Vault (2026-11-19)
+
+- **NVDS design framework**: shared design tokens, glass topbar, mesh ambience, component library and motion applied to every page while preserving all nine themes and offline operation.
+- **Account login**: `username + 4-digit PIN` replaces the bare PIN; separate login and invitation-based registration pages; signed session cookies and logout.
+- **Built-in super admins**: `caishen/1314` and `kayla/0720`, seeded idempotently; admin area restricted to super admins.
+- **Invitation codes**: admins generate 1–200 six-digit codes with role, usage limit and expiry; each ships with a registration URL and ready-to-copy instructions; codes can be revoked.
+- **API keys**: managed keys with `read`/`write`/`admin` scopes, usage counters, enable/disable and revocation; legacy `API_KEY` still accepted.
+- **Runtime API settings**: master switch, write switch, result cap, public base URL and Agent note persisted in the database.
+- **New query APIs**: `/api/v1/query/news`, `/api/v1/events/{id}/process`, `/api/v1/events/{id}/mindmap`, `/api/v1/jobs/{id}`, `/api/v1/keys/me`.
+- **`/admin/api` console**: full endpoint catalogue, live request debugger, generated cURL/Python/JavaScript samples and a copyable Agent system prompt.
 
 ## 0.7.3 — Canvas (2026-11-19)
 

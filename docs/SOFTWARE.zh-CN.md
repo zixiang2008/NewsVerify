@@ -1,6 +1,6 @@
 # NewsVerify 软件说明书
 
-**版本：** 0.7.3（Canvas） · **发布日期：** 2026-11-19  
+**版本：** 0.8.0（Vault） · **发布日期：** 2026-11-19  
 **代码仓库：** https://github.com/zixiang2008/NewsVerify  
 **在线控制台：** https://new.caishen.today（局域网：`http://192.168.8.253:8095`）
 
@@ -266,6 +266,17 @@ curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
 - **每条新闻的专属脑图**：`renderEvents()` 在每条任务卡片内调用 `mmRenderMinis()`，渲染 4 分支迷你脑图；点击卡片/按钮进入完整六分支脑图。详情弹窗在 `mmRenderInlineDetail()` 中内嵌可交互脑图，并保留轮询视图隔离。
 - **分享**：`POST /api/mindmap/share` 将模型快照写入 `mindmap_shares` 表，返回随机 token 链接；`GET /share/{token}` 为公开只读页面（可切换布局/主题、导出 SVG/PNG），二维码由 segno 生成。分享内容是静态快照，不含后台凭证；删除接口可撤销链接。中间件仅对分享页与快照 GET 放行，写接口仍需 PIN。
 - **可读性**：六色图例、分支图标、简短读图提示；节点支持展开/收起、缩放；导出 SVG 与 PNG（2 倍分辨率）全部本地生成，不依赖外部服务。
+
+---
+
+## 7.9 v0.8.0 新增：设计框架、账号体系与 Agent API
+
+- **NVDS** 把主题与组件集中于 `app/web/design.py`；控制台、登录、注册、后台与 API 控制台共用同一套令牌、表面与动效。
+- **账号体系**：登录改为「用户名 + 4 位 PIN」；`/register` 需 6 位邀请码；会话使用 HMAC 签名 Cookie。内置超级管理员 `caishen/1314`、`kayla/0720` 在启动时自动播种。
+- **邀请码管理**（`/admin/accounts`）：批量生成 1–200 个码，可设类别、次数与有效期；单个或批量复制含注册地址的说明；可随时撤销。
+- **API Key**（`/admin/api`）：创建 read/write/admin 权限的 Key，支持启停、删除、调用计数与最近使用时间；运行时设置（总开关、写开关、查询上限、对外地址、Agent 提示）持久化到数据库。
+- **Agent 接口**：`/api/v1/query/news`、`/api/v1/events/{id}/process`、`/api/v1/events/{id}/mindmap`、`/api/v1/jobs/{id}`、`/api/v1/keys/me`。
+- **在线调试**：接口目录列出参数，可直接发起请求，并生成 cURL / Python / JavaScript 示例与可复制的 Agent 系统提示词。
 
 ---
 

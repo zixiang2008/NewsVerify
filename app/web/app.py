@@ -14,34 +14,104 @@ from app.integrations import IMMessage, IMReply
 from app.integrations.guides import CHANNEL_GUIDES, public_catalogue
 from app.integrations import channel_store
 from app.web.mindmap_asset import CSS as MM_CSS, JS as MM_JS, share_page as mm_share_page
+from app.web.design import DESIGN_CSS, THEME_CSS, page_shell, tabs_html, SHELL_JS
+from app.web import auth as nv_auth
+from app.web.auth_pages import login_page as auth_login_html, register_page as auth_register_html, admin_login_page as auth_admin_login_html
+from app.web.admin_pages import overview_page, accounts_page
+from app.web.api_console import api_console_page
+from app.web.api_process import build_process
 from fastapi import Depends, HTTPException
 
-def verify_api_key(request: Request):
-    import os
-    key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    expected = os.getenv("API_KEY", "") or get_settings().__dict__.get("api_key", "")
-    # fallback: read from .env via settings if present
+API_SETTING_DEFAULTS = {
+    "api_enabled": True,
+    "allow_write": True,
+    "max_results": 100,
+    "rate_limit_per_min": 120,
+    "public_base_url": "",
+    "agent_note": "通过 X-API-Key 请求头携带管理 Key；先 GET /api/v1/status 验证连通。",
+}
+
+
+async def get_api_settings() -> dict:
+    """Runtime API settings with safe defaults, read from the database."""
+    from sqlalchemy import select
+    from app.db.models import ApiSetting
+    out = dict(API_SETTING_DEFAULTS)
     try:
-        expected = expected or getattr(get_settings(), "api_key", "")
+        sm = get_sessionmaker()
+        async with sm() as session:
+            rows = (await session.execute(select(ApiSetting))).scalars().all()
+            for row in rows:
+                if isinstance(row.value, dict) and "value" in row.value:
+                    out[row.key] = row.value["value"]
     except Exception:
         pass
-    if not expected or key != expected:
-        raise HTTPException(status_code=401, detail="invalid or missing API key")
-    return True
+    return out
+
+
+async def verify_api_key(request: Request):
+    """Key authentication for the public /api/v1 surface.
+
+    Managed keys live in the database (created by a super admin). The legacy
+    ``API_KEY`` environment variable remains a valid fallback.
+    """
+    import os
+    from sqlalchemy import select
+    from app.db.models import ApiKey, now_utc
+
+    key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    if not key:
+        raise HTTPException(status_code=401, detail="missing API key")
+    settings = await get_api_settings()
+    if not settings.get("api_enabled", True):
+        raise HTTPException(status_code=503, detail="API temporarily disabled by administrator")
+
+    try:
+        sm = get_sessionmaker()
+        async with sm() as session:
+            result = await session.execute(select(ApiKey).where(ApiKey.key == key))
+            rec = result.scalars().first()
+            if rec:
+                if not rec.enabled:
+                    raise HTTPException(status_code=403, detail="API key disabled")
+                scopes = list(rec.scopes or ["read"])
+                write_call = request.method in ("POST", "PUT", "PATCH", "DELETE")
+                if write_call and not settings.get("allow_write", True):
+                    raise HTTPException(status_code=403, detail="write operations disabled")
+                if write_call and not ({"write", "admin"} & set(scopes)):
+                    raise HTTPException(status_code=403, detail="key lacks write scope")
+                rec.calls = (rec.calls or 0) + 1
+                rec.last_used_at = now_utc()
+                await session.commit()
+                request.state.api_key = {"key": key, "name": rec.name, "scopes": scopes}
+                return True
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+    expected = os.getenv("API_KEY", "") or getattr(get_settings(), "api_key", "")
+    if expected and key == expected:
+        request.state.api_key = {"key": key, "name": "legacy env key", "scopes": ["read", "write", "admin"]}
+        return True
+    raise HTTPException(status_code=401, detail="invalid API key")
+
 
 app = FastAPI(title="NewsVerify", version=VERSION)
 
 
 @app.on_event("startup")
 async def _load_im_channels():
-    """Load wizard-saved credentials so saved channels work after restart."""
+    """Load wizard-saved credentials and seed the built-in administrators."""
+    try:
+        await nv_auth.seed_super_admins(get_sessionmaker())
+    except Exception as exc:
+        print("admin seed failed:", exc)
     try:
         await im_registry.reload_from_db()
     except Exception:
         pass
 
-
-PIN_CODE = "1314"
 
 # 注册 IM 接入处理器：把归一化的消息路由到核查流程（此处回执确认，实际提交
 # 通过 /submit 或 /api/v1/check；webhook 仅做入口抽象与白名单校验）。
@@ -56,126 +126,87 @@ def _im_handler(msg: IMMessage) -> IMReply:
 
 im_registry.set_handler(_im_handler)
 
-ADMIN_LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>NewsVerify 后台登录</title>
-<style>
-body{font-family:-apple-system,sans-serif;background:radial-gradient(900px 500px at 50% -10%,#1b2a4a 0%,#08101f 70%);color:#e6edf7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-.box{background:#111c33;border:1px solid #1e2d4d;border-radius:18px;padding:32px;width:min(360px,92vw);box-shadow:0 18px 50px rgba(0,0,0,.4)}
-h1{font-size:20px;color:#38bdf8;margin-bottom:6px}.ver{font-size:11px;color:#8b9bb5;margin-bottom:20px}
-input{width:100%;padding:12px;border-radius:10px;border:1px solid #1e2d4d;background:#08101f;color:#e6edf7;font-size:22px;letter-spacing:10px;text-align:center}
-button{width:100%;margin-top:12px;padding:11px;border:none;border-radius:10px;background:linear-gradient(90deg,#38bdf8,#818cf8);color:#08101f;font-weight:700;cursor:pointer}
-.err{color:#f87171;font-size:12px;margin-top:8px;display:none}
-</style></head><body><div class="box">
-<h1>NewsVerify 后台管理</h1><div class="ver">请输入 4 位 PIN 码进入设置</div>
-<input id="pin" type="password" inputmode="numeric" maxlength="4" placeholder="••••" autofocus />
-<button onclick="login()">进入后台</button><div class="err" id="err">PIN 码错误</div>
-</div><script>
-async function login(){const pin=document.getElementById('pin').value;const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pin='+encodeURIComponent(pin)});if(r.ok){location.href='/admin';}else{document.getElementById('err').style.display='block';}}
-document.getElementById('pin').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
-</script></body></html>"""
-
-ADMIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>NewsVerify 后台管理</title>
-<style>
-:root{color-scheme:dark;--bg:#08101f;--card:#111c33;--card2:#162240;--border:#1e2d4d;--text:#e6edf7;--muted:#8b9bb5;--accent:#38bdf8;--accent2:#818cf8;--ok:#22c55e;--bad:#f87171}
-body{font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:24px}
-.wrap{max-width:1080px;margin:0 auto}h1{font-size:22px;color:var(--accent)}.sub{color:var(--muted);font-size:12px;margin:4px 0 20px}
-.card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px}
-.card h2{font-size:15px;color:var(--accent2);margin-bottom:10px}
-table{width:100%;border-collapse:collapse;font-size:12px}td{padding:8px;border-bottom:1px solid var(--border)}td.k{color:var(--muted);width:34%}
-code{color:var(--accent);word-break:break-all}.badge{font-size:10px;padding:2px 8px;border-radius:999px;background:#123;color:var(--accent)}
-.on{color:var(--ok)}.off{color:var(--bad)}
-.btn{padding:7px 12px;border:none;border-radius:8px;background:var(--accent);color:#08101f;font-weight:700;cursor:pointer;font-size:12px}
-a{color:var(--accent);text-decoration:none}
-</style></head><body><div class="wrap">
-<h1>⚙️ NewsVerify 后台管理</h1><div class="sub">查看 API 配置、管理即时通讯接入入口 · 版本 __APP_VERSION__ · <a href="/">← 返回控制台</a></div>
-<div class="card"><h2>🔑 调用的 API 与可设置信息</h2><table id="cfgTable"><tr><td>加载中…</td></tr></table>
-<p class="sub" id="envNotice"></p></div>
-<div class="card"><h2>💬 即时通讯接入入口（主流平台）</h2>
-<p class="sub"><b>推荐：使用交互式接入向导</b> —— 扫码 / Token 辅助、填表即生效、一键真实测试，无需改代码或重启。<a href="/admin/im" style="font-weight:700">→ 打开 IM 接入向导</a></p>
-<p class="sub">统一 Webhook 入口：<code>/api/v1/im/{平台key}/webhook</code>。下方为兼容旧配置的只读概览。</p>
-<table id="chTable"><tr><td>加载中…</td></tr></table></div>
-<div class="card"><h2>📡 Webhook 接入测试</h2><p class="sub">向指定平台通道发送一条测试回执。</p>
-<select id="testCh" style="background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px;border-radius:8px"></select>
-<input id="testChat" placeholder="chat_id" value="test" style="background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px;border-radius:8px;margin-left:6px"/>
-<button class="btn" style="margin-left:6px" onclick="testChannel()">发送测试</button>
-<div id="testResult" class="sub"></div></div>
-<script>
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-async function loadCfg(){const d=await(await fetch('/api/admin/config')).json();
-const rows=[['LLM 主地址',d.llm_base_url],['LLM 备用地址',d.llm_base_url_fallback],['核查模型',d.llm_model],['判定模型',d.llm_judge_model],['LLM API Key',d.llm_api_key_masked],['搜索提供方',d.search_provider],['SearXNG 地址',d.searxng_base_url],['Brave Key',d.brave_key_masked],['Google FactCheck Key',d.google_factcheck_key_masked],['Public API Key',d.api_key_masked],['Telegram Bot',d.telegram_bot_configured?'已配置':'未配置'],['允许的用户 ID',d.telegram_allowed_user_ids],['自定义 RSS 源',d.custom_feed_urls],['版本',d.version]];
-document.getElementById('cfgTable').innerHTML=rows.map(r=>`<tr><td class="k">${esc(r[0])}</td><td><code>${esc(r[1])||'—'}</code></td></tr>`).join('');
-document.getElementById('envNotice').textContent=d.env_notice;}
-async function loadChannels(){const d=await(await fetch('/api/admin/channels')).json();
-document.getElementById('chTable').innerHTML='<tr><td class="k"><b>平台</b></td><td><b>状态</b></td><td><b>文档 / 入口</b></td></tr>'+d.channels.map(c=>`<tr><td class="k">${esc(c.label)}</td><td class="${c.configured?'on':'off'}">${c.configured?'● 已配置':'○ 待配置'}</td><td><a href="${esc(c.docs)}" target="_blank">${esc(c.docs)}</a><br><code>/api/v1/im/${esc(c.key)}/webhook</code></td></tr>`).join('');
-document.getElementById('testCh').innerHTML=d.channels.map(c=>`<option value="${esc(c.key)}">${esc(c.label)}</option>`).join('');}
-async function testChannel(){const key=document.getElementById('testCh').value,chat=document.getElementById('testChat').value;
-const r=await fetch('/api/admin/channels/'+key+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chat,text:'NewsVerify 后台测试消息'})});const d=await r.json();
-document.getElementById('testResult').textContent=d.ok?'✅ 发送成功':'⚠️ 未配置或发送失败（'+JSON.stringify(d)+'）';}
-loadCfg();loadChannels();
-</script></div></body></html>""".replace("__APP_VERSION__", VERSION)
+ADMIN_HTML = overview_page(VERSION)
 
 @app.middleware("http")
-async def pin_auth(request: Request, call_next):
+async def session_auth(request: Request, call_next):
+    """Account session middleware.
+
+    Public: login/registration, health, static assets, key-authenticated v1 API,
+    mind-map share pages, the public theory page and the admin sign-in page.
+    Everything else requires a signed ``nv_auth`` session; admin paths require
+    a super-admin ``nv_admin`` session.
+    """
     path = request.url.path
-    if path in ("/login", "/health") or path.startswith("/static") or path.startswith("/api/v1"):
-        return await call_next(request)
-    # 脑图分享页与分享快照接口公开可访问（静态快照，不含后台凭证）
-    if path.startswith("/share/") or (
-        path.startswith("/api/mindmap/share/") and request.method == "GET"
-    ):
-        return await call_next(request)
-    # 理论来源页公开可访问；后台管理走独立 PIN 会话
-    if path.startswith("/theory") or path in ("/admin/login", "/api/admin/login"):
+    public = (
+        path in ("/login", "/register", "/health", "/logout", "/admin/login", "/api/admin/login")
+        or path.startswith("/static")
+        or path.startswith("/api/v1")
+        or path.startswith("/share/")
+        or (path.startswith("/api/mindmap/share/") and request.method == "GET")
+        or path.startswith("/theory")
+    )
+    if public:
         return await call_next(request)
     if path.startswith("/admin") or path.startswith("/api/admin"):
-        if request.cookies.get("nv_admin") != PIN_CODE:
+        session = nv_auth.parse_session(request.cookies.get("nv_admin"))
+        if not session or session.get("role") != "super_admin":
             if path.startswith("/api/"):
-                return JSONResponse({"error": "unauthorized"}, status_code=401)
+                return JSONResponse({"error": "super admin required"}, status_code=401)
             return RedirectResponse(url="/admin/login", status_code=302)
+        request.state.user = session
         return await call_next(request)
-    cookie = request.cookies.get("nv_auth")
-    if cookie != PIN_CODE:
+    session = nv_auth.parse_session(request.cookies.get("nv_auth"))
+    if not session:
         if path.startswith("/api") or path.startswith("/submit"):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return RedirectResponse(url="/login", status_code=302)
+    request.state.user = session
     return await call_next(request)
 
+
+def _session_response(user: dict, target: str) -> RedirectResponse:
+    resp = RedirectResponse(url=target, status_code=302)
+    token = nv_auth.make_session(user["username"], user["role"])
+    resp.set_cookie("nv_auth", token, httponly=True, max_age=86400 * 30, samesite="lax")
+    if user.get("role") == "super_admin":
+        resp.set_cookie("nv_admin", token, httponly=True, max_age=86400, samesite="lax")
+    return resp
+
+
 @app.get("/login", response_class=HTMLResponse)
-async def login_page():
-    return HTMLResponse("""<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NewsVerify 登录</title>
-<style>
-:root{color-scheme:dark;--nv-bg:rgb(8 16 31);--nv-card:rgb(17 28 51);--nv-border:rgb(30 45 77);--nv-text:rgb(230 237 247);--nv-accent:rgb(56 189 248);--nv-accent2:rgb(129 140 248);--nv-muted:rgb(139 155 181);--nv-bad:rgb(248 113 113)}
-body{font-family:-apple-system,sans-serif;background:radial-gradient(900px 500px at 50% -10%,var(--hero-a) 0%,transparent 70%),var(--nv-bg);color:var(--nv-text);display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-.box{background:var(--nv-card);border:1px solid var(--nv-border);border-radius:18px;padding:32px;width:min(360px,92vw);box-shadow:0 18px 50px rgba(0,0,0,.4)}
-h1{font-size:20px;margin-bottom:6px;color:var(--nv-accent)}
-.ver{font-size:11px;color:var(--nv-muted);margin-bottom:20px}
-input{width:100%;padding:11px;border-radius:10px;border:1px solid var(--nv-border);background:var(--nv-bg);color:var(--nv-text);font-size:16px;letter-spacing:4px;text-align:center}
-button{width:100%;margin-top:12px;padding:11px;border:none;border-radius:10px;background:linear-gradient(90deg,var(--nv-accent),var(--nv-accent2));color:rgb(8 16 31);font-weight:700;cursor:pointer}
-.err{color:var(--nv-bad);font-size:12px;margin-top:8px;display:none}
-.tip{margin-top:18px;font-size:11px;color:var(--nv-muted);text-align:center;line-height:1.6}
-</style></head><body>
-<div class="box">
-  <h1>NewsVerify</h1>
-  <div class="ver">个人新闻事实核查与持续追踪 · v__APP_VERSION__</div>
-  <form method="post" action="/login">
-    <input name="pin" type="password" placeholder="PIN" maxlength="8" autofocus />
-    <button type="submit">进入控制台</button>
-    <div class="err" id="err">PIN 错误</div>
-  </form>
-  <div class="tip">登录后可使用多风格界面模板、任务核查与系统运行状况面板</div>
-</div>
-</body></html>""".replace("__APP_VERSION__", VERSION))
+async def login_page(note: str = ""):
+    return HTMLResponse(auth_login_html(VERSION, note))
+
 
 @app.post("/login")
-async def login_submit(pin: str = Form(...)):
-    if pin == PIN_CODE:
-        resp = RedirectResponse(url="/", status_code=302)
-        resp.set_cookie("nv_auth", PIN_CODE, httponly=True, max_age=86400*30, samesite="lax")
-        return resp
-    return RedirectResponse(url="/login?err=1", status_code=302)
+async def login_submit(username: str = Form(...), pin: str = Form(...)):
+    user = await nv_auth.authenticate(get_sessionmaker(), username, pin)
+    if not user:
+        return RedirectResponse(url="/login?note=bad", status_code=302)
+    return _session_response(user, "/")
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(code: str = "", note: str = ""):
+    return HTMLResponse(auth_register_html(VERSION, code, note))
+
+
+@app.post("/register")
+async def register_submit(username: str = Form(...), pin: str = Form(...), code: str = Form(...)):
+    ok, message, user = await nv_auth.register_with_invite(get_sessionmaker(), username, pin, code)
+    if not ok:
+        note = "invite" if "邀请码" in message else ("taken" if "已被注册" in message else "invalid")
+        return HTMLResponse(auth_register_html(VERSION, code, note), status_code=400)
+    return RedirectResponse(url="/login?note=ok", status_code=302)
+
+
+@app.get("/logout")
+async def logout():
+    resp = RedirectResponse(url="/login", status_code=302)
+    resp.delete_cookie("nv_auth")
+    resp.delete_cookie("nv_admin")
+    return resp
 
 
 @app.get("/theory", response_class=HTMLResponse)
@@ -203,24 +234,41 @@ async def api_system():
     return await get_system_status()
 
 
-# ---------- 后台管理（独立 PIN 会话） ----------
+# ---------- 后台管理（超级管理员会话） ----------
 @app.get("/api/admin/login")
-async def admin_login_page():
-    return HTMLResponse(ADMIN_LOGIN_HTML)
+async def admin_login_api_page():
+    return HTMLResponse(auth_admin_login_html(VERSION))
 
 
 @app.post("/api/admin/login")
-async def admin_login_submit(pin: str = Form(...)):
-    if pin == PIN_CODE:
-        resp = JSONResponse({"ok": True})
-        resp.set_cookie("nv_admin", PIN_CODE, httponly=True, max_age=86400, samesite="lax")
-        return resp
-    return JSONResponse({"error": "invalid pin"}, status_code=401)
+async def admin_login_submit(request: Request):
+    if request.headers.get("content-type", "").startswith("application/json"):
+        body = await request.json()
+        username, pin = body.get("username", ""), body.get("pin", "")
+    else:
+        form = await request.form()
+        username, pin = form.get("username", ""), form.get("pin", "")
+    user = await nv_auth.authenticate(get_sessionmaker(), username, pin)
+    if not user or user.get("role") != "super_admin":
+        return JSONResponse({"error": "invalid super admin credentials"}, status_code=401)
+    token = nv_auth.make_session(user["username"], user["role"])
+    resp = JSONResponse({"ok": True, "username": user["username"]})
+    resp.set_cookie("nv_admin", token, httponly=True, max_age=86400, samesite="lax")
+    resp.set_cookie("nv_auth", token, httponly=True, max_age=86400 * 30, samesite="lax")
+    return resp
 
 
 @app.get("/admin/login", response_class=HTMLResponse)
-async def admin_login_view():
-    return HTMLResponse(ADMIN_LOGIN_HTML)
+async def admin_login_view(note: str = ""):
+    return HTMLResponse(auth_admin_login_html(VERSION, note))
+
+
+@app.post("/admin/login")
+async def admin_login_form(username: str = Form(...), pin: str = Form(...)):
+    user = await nv_auth.authenticate(get_sessionmaker(), username, pin)
+    if not user or user.get("role") != "super_admin":
+        return RedirectResponse(url="/admin/login?note=bad", status_code=302)
+    return _session_response(user, "/admin")
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -253,6 +301,189 @@ async def admin_get_config():
         "version": VERSION,
         "env_notice": "修改 .env 后需重启容器生效；Webhook 接入可用下方测试入口验证。",
     }
+
+
+@app.get("/admin/accounts", response_class=HTMLResponse)
+async def admin_accounts_page():
+    return HTMLResponse(accounts_page(VERSION))
+
+
+def _admin_user(request: Request) -> str:
+    session = getattr(request.state, "user", None) or {}
+    return str(session.get("username", "admin"))
+
+
+@app.get("/api/admin/users")
+async def admin_users():
+    from sqlalchemy import select
+    from app.db.models import User
+    sm = get_sessionmaker()
+    async with sm() as session:
+        rows = (await session.execute(select(User).order_by(User.created_at.desc()))).scalars().all()
+        return {"users": [{
+            "username": u.username, "display_name": u.display_name, "role": u.role,
+            "active": u.active, "invited_by": u.invited_by,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+        } for u in rows]}
+
+
+@app.get("/api/admin/invites")
+async def admin_invites():
+    from sqlalchemy import select
+    from app.db.models import InviteCode
+    sm = get_sessionmaker()
+    async with sm() as session:
+        rows = (await session.execute(select(InviteCode).order_by(InviteCode.created_at.desc()).limit(500))).scalars().all()
+        return {"invites": [{
+            "code": v.code, "role": v.role, "note": v.note, "batch": v.batch,
+            "created_by": v.created_by, "max_uses": v.max_uses, "used_count": v.used_count,
+            "active": v.active,
+            "expires_at": v.expires_at.isoformat() if v.expires_at else None,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+        } for v in rows]}
+
+
+@app.post("/api/admin/invites/generate")
+async def admin_invites_generate(request: Request):
+    import datetime as dt
+    from app.db.models import InviteCode
+    body = await request.json()
+    data = nv_auth.generate_codes(
+        count=int(body.get("count", 1)), role=str(body.get("role", "user")),
+        note=str(body.get("note", "")), created_by=_admin_user(request),
+        max_uses=int(body.get("max_uses", 1)),
+        expires_days=int(body.get("expires_days") or 0),
+    )
+    base = str(request.base_url).rstrip("/")
+    sm = get_sessionmaker()
+    async with sm() as session:
+        for code in data["codes"]:
+            session.add(InviteCode(
+                code=code, role=data["role"], note=data["note"], batch=data["batch"],
+                created_by=data["created_by"], max_uses=data["max_uses"], expires_at=data["expires_at"],
+            ))
+        await session.commit()
+    out = []
+    for code in data["codes"]:
+        url = f"{base}/register?code={code}"
+        text = (
+            f"NewsVerify 账号邀请\n注册地址：{url}\n邀请码：{code}\n"
+            f"用法：打开链接 → 输入用户名与 4 位 PIN → 填入上方邀请码完成注册。"
+            f"{('备注：' + data['note']) if data['note'] else ''}"
+        )
+        out.append({"code": code, "url": url, "share_text": text})
+    return {"ok": True, "batch": data["batch"], "codes": out}
+
+
+@app.delete("/api/admin/invites/{code}")
+async def admin_invites_revoke(code: str):
+    from sqlalchemy import select
+    from app.db.models import InviteCode
+    sm = get_sessionmaker()
+    async with sm() as session:
+        row = (await session.execute(select(InviteCode).where(InviteCode.code == code))).scalars().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="invite not found")
+        row.active = False
+        await session.commit()
+    return {"ok": True}
+
+
+@app.get("/admin/api", response_class=HTMLResponse)
+async def admin_api_console():
+    return HTMLResponse(api_console_page(VERSION))
+
+
+@app.get("/api/admin/api-keys")
+async def admin_api_keys():
+    from sqlalchemy import select
+    from app.db.models import ApiKey
+    sm = get_sessionmaker()
+    async with sm() as session:
+        rows = (await session.execute(select(ApiKey).order_by(ApiKey.created_at.desc()))).scalars().all()
+        return {"keys": [{
+            "key": k.key, "name": k.name, "scopes": k.scopes or [], "enabled": k.enabled,
+            "created_by": k.created_by, "calls": k.calls,
+            "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+            "created_at": k.created_at.isoformat() if k.created_at else None,
+        } for k in rows]}
+
+
+@app.post("/api/admin/api-keys")
+async def admin_api_key_create(request: Request):
+    import secrets
+    from app.db.models import ApiKey
+    body = await request.json()
+    name = str(body.get("name", "")).strip()[:128] or "未命名 Key"
+    scopes = body.get("scopes") or ["read"]
+    if not isinstance(scopes, list):
+        scopes = ["read"]
+    scopes = [s for s in scopes if s in ("read", "write", "admin")] or ["read"]
+    key = "nvk_" + secrets.token_urlsafe(24)
+    sm = get_sessionmaker()
+    async with sm() as session:
+        session.add(ApiKey(key=key, name=name, scopes=scopes, enabled=True, created_by=_admin_user(request)))
+        await session.commit()
+    base = str(request.base_url).rstrip("/")
+    return {"ok": True, "key": key, "name": name, "scopes": scopes, "base_url": base}
+
+
+@app.patch("/api/admin/api-keys/{key}")
+async def admin_api_key_update(key: str, request: Request):
+    from app.db.models import ApiKey
+    body = await request.json()
+    sm = get_sessionmaker()
+    async with sm() as session:
+        rec = await session.get(ApiKey, key)
+        if not rec:
+            raise HTTPException(status_code=404, detail="key not found")
+        if "enabled" in body:
+            rec.enabled = bool(body["enabled"])
+        if "name" in body:
+            rec.name = str(body["name"])[:128]
+        if "scopes" in body and isinstance(body["scopes"], list):
+            rec.scopes = [s for s in body["scopes"] if s in ("read", "write", "admin")]
+        await session.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/api-keys/{key}")
+async def admin_api_key_delete(key: str):
+    from app.db.models import ApiKey
+    sm = get_sessionmaker()
+    async with sm() as session:
+        rec = await session.get(ApiKey, key)
+        if not rec:
+            raise HTTPException(status_code=404, detail="key not found")
+        await session.delete(rec)
+        await session.commit()
+    return {"ok": True}
+
+
+@app.get("/api/admin/api/settings")
+async def admin_api_settings_get():
+    return {"settings": await get_api_settings(), "defaults": API_SETTING_DEFAULTS}
+
+
+@app.put("/api/admin/api/settings")
+async def admin_api_settings_put(request: Request):
+    from app.db.models import ApiSetting
+    body = await request.json()
+    unknown = set(body) - set(API_SETTING_DEFAULTS)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown setting: {', '.join(sorted(unknown))}")
+    sm = get_sessionmaker()
+    async with sm() as session:
+        for key, value in body.items():
+            rec = await session.get(ApiSetting, key)
+            if rec is None:
+                rec = ApiSetting(key=key)
+                session.add(rec)
+            rec.value = {"value": value}
+            rec.updated_by = _admin_user(request)
+        await session.commit()
+    return {"ok": True, "settings": await get_api_settings()}
 
 
 @app.get("/api/admin/channels")
@@ -850,6 +1081,86 @@ async def api_v1_source_policy(ok: bool = Depends(verify_api_key)):
     return source_policy_payload()
 
 
+@app.get("/api/v1/keys/me")
+async def api_v1_key_info(request: Request, ok: bool = Depends(verify_api_key)):
+    info = getattr(request.state, "api_key", {}) or {}
+    return {"name": info.get("name", ""), "scopes": info.get("scopes", []),
+            "key_prefix": str(info.get("key", ""))[:8] + "…", "version": VERSION}
+
+
+@app.get("/api/v1/query/news")
+async def api_v1_query_news(q: str = "", status: str = "", limit: int = 20,
+                            ok: bool = Depends(verify_api_key)):
+    """Search verification events by title; returns compact cards with verdicts."""
+    from sqlalchemy import select, or_
+    from app.db.models import Event, Job, Verdict
+    cap = int((await get_api_settings()).get("max_results", 100))
+    limit = max(1, min(limit, cap))
+    sm = get_sessionmaker()
+    async with sm() as session:
+        stmt = select(Event)
+        if q:
+            like = f"%{q.strip()}%"
+            stmt = stmt.where(or_(Event.title.ilike(like), Event.id.ilike(like)))
+        if status:
+            stmt = stmt.where(Event.status == status)
+        rows = (await session.execute(stmt.order_by(Event.created_at.desc()).limit(limit))).scalars().all()
+        out = []
+        for e in rows:
+            job = (await session.execute(
+                select(Job).where(Job.payload["event_id"].as_string() == e.id).order_by(Job.created_at.desc()).limit(1)
+            )).scalars().first()
+            verdicts = (await session.execute(select(Verdict).where(Verdict.event_id == e.id))).scalars().all()
+            out.append({
+                "event_id": e.id, "title": e.title, "status": e.status,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+                "job_status": job.status if job else None,
+                "verdicts": [{"label": v.label, "confidence": v.confidence} for v in verdicts],
+            })
+        return {"query": q, "status": status, "count": len(out), "limit": limit, "results": out}
+
+
+@app.get("/api/v1/events/{event_id}/process")
+async def api_v1_event_process(event_id: str, ok: bool = Depends(verify_api_key)):
+    """Every process artifact for one event: jobs, progress, claims, verdicts,
+    evidence with source metadata, subscription state, notifications and media."""
+    sm = get_sessionmaker()
+    async with sm() as session:
+        payload = await build_process(session, event_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="event not found")
+    return payload
+
+
+@app.get("/api/v1/events/{event_id}/mindmap")
+async def api_v1_event_mindmap(event_id: str, layout: str = "tree",
+                               ok: bool = Depends(verify_api_key)):
+    sm = get_sessionmaker()
+    async with sm() as session:
+        payload = await build_process(session, event_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="event not found")
+    return {"event_id": event_id, "layout": layout if layout in ("tree", "waterfall", "radial") else "tree",
+            "model": payload["mindmap"], "share_hint": "POST /api/mindmap/share with this model"}
+
+
+@app.get("/api/v1/jobs/{job_id}")
+async def api_v1_job(job_id: str, ok: bool = Depends(verify_api_key)):
+    from app.db.models import Job
+    sm = get_sessionmaker()
+    async with sm() as session:
+        job = await session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="job not found")
+        return {
+            "id": job.id, "kind": job.kind, "status": job.status, "attempts": job.attempts,
+            "error": job.error, "result": job.result, "payload": job.payload,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        }
+
+
 @app.post("/api/v1/check")
 async def api_v1_check(request: Request, ok: bool = Depends(verify_api_key)):
     body = await request.json()
@@ -1033,7 +1344,9 @@ async def submit(text: str = Form(...), mode: str = Form("full"), freq: str = Fo
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
+async def index(request: Request = None):
+    session = nv_auth.parse_session(request.cookies.get("nv_auth")) if request else None
+    username = (session or {}).get("username", "admin")
     html = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1041,117 +1354,8 @@ async def index():
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NewsVerify 新闻事实核查控制台</title>
 <style>
-:root{
- color-scheme:dark;
- --bg:rgb(8 16 31);--bg2:rgb(13 22 40);--card:rgb(17 28 51);--card2:rgb(22 34 64);
- --surface-0:rgb(8 16 31);--surface-1:rgb(17 28 51);--surface-2:rgb(11 22 40);--surface-3:rgb(22 34 64);
- --text:rgb(230 237 247);--muted:rgb(139 155 181);--border:rgb(30 45 77);
- --accent:rgb(56 189 248);--accent2:rgb(129 140 248);--accent3:rgb(52 211 153);
- --accent-soft:rgb(125 211 252);--accent2-soft:rgb(165 180 252);
- --ok:rgb(34 197 94);--warn:rgb(245 158 11);--bad:rgb(239 68 68);
- --ok-text:rgb(74 222 128);--warn-text:rgb(251 191 36);--bad-text:rgb(248 113 113);
- --on-accent:rgb(8 16 31);--hero-a:rgb(26 42 74);--hero-b:rgb(31 26 58);--reported-bg:rgb(10 26 22);
- --shadow:0 14px 40px rgba(0,0,0,.38);--radius:16px;--radius-sm:10px;--gap:18px;
-}
-html[data-theme="paper"]{
- color-scheme:light;
- --bg:rgb(244 247 252);--bg2:rgb(236 241 249);--card:rgb(255 255 255);--card2:rgb(248 250 253);
- --surface-0:rgb(248 250 253);--surface-1:rgb(255 255 255);--surface-2:rgb(240 244 250);--surface-3:rgb(232 238 247);
- --text:rgb(24 37 58);--muted:rgb(95 111 133);--border:rgb(211 220 233);
- --accent:rgb(37 99 235);--accent2:rgb(79 70 229);--accent3:rgb(13 148 136);
- --accent-soft:rgb(29 78 216);--accent2-soft:rgb(67 56 202);
- --ok:rgb(22 163 74);--warn:rgb(217 119 6);--bad:rgb(220 38 38);
- --ok-text:rgb(21 128 61);--warn-text:rgb(180 83 9);--bad-text:rgb(190 18 60);
- --on-accent:rgb(255 255 255);--hero-a:rgb(219 234 254);--hero-b:rgb(224 231 255);--reported-bg:rgb(236 253 245);
- --shadow:0 12px 34px rgba(30,58,95,.10);
-}
-html[data-theme="slate"]{
- color-scheme:dark;
- --bg:rgb(15 23 42);--bg2:rgb(20 30 52);--card:rgb(30 41 59);--card2:rgb(36 48 68);
- --surface-0:rgb(15 23 42);--surface-1:rgb(30 41 59);--surface-2:rgb(24 35 54);--surface-3:rgb(40 53 74);
- --text:rgb(241 245 249);--muted:rgb(148 163 184);--border:rgb(51 65 85);
- --accent:rgb(96 165 250);--accent2:rgb(167 139 250);--accent3:rgb(45 212 191);
- --accent-soft:rgb(147 197 253);--accent2-soft:rgb(196 181 253);
- --ok:rgb(74 222 128);--warn:rgb(251 191 36);--bad:rgb(248 113 113);
- --ok-text:rgb(134 239 172);--warn-text:rgb(253 224 71);--bad-text:rgb(252 165 165);
- --on-accent:rgb(15 23 42);--hero-a:rgb(30 58 95);--hero-b:rgb(49 46 129);--reported-bg:rgb(20 58 48);
- --shadow:0 16px 40px rgba(2,6,23,.45);
-}
-html[data-theme="terminal"]{
- color-scheme:dark;
- --bg:rgb(5 14 9);--bg2:rgb(8 20 13);--card:rgb(10 26 17);--card2:rgb(13 32 21);
- --surface-0:rgb(5 14 9);--surface-1:rgb(10 26 17);--surface-2:rgb(8 22 14);--surface-3:rgb(16 38 25);
- --text:rgb(220 255 233);--muted:rgb(134 175 150);--border:rgb(34 82 54);
- --accent:rgb(74 222 128);--accent2:rgb(163 230 53);--accent3:rgb(45 212 191);
- --accent-soft:rgb(134 239 172);--accent2-soft:rgb(190 242 100);
- --ok:rgb(74 222 128);--warn:rgb(250 204 21);--bad:rgb(248 113 113);
- --ok-text:rgb(134 239 172);--warn-text:rgb(253 224 71);--bad-text:rgb(252 165 165);
- --on-accent:rgb(5 14 9);--hero-a:rgb(10 45 25);--hero-b:rgb(20 60 35);--reported-bg:rgb(10 40 24);
- --shadow:0 16px 42px rgba(0,0,0,.55);--radius:10px;--radius-sm:6px;
-}
-html[data-theme="terminal"] body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
-/* ==== v0.6.0 新增 5 套风格：ocean / forest / sunset / violet / mono ==== */
-html[data-theme="ocean"]{
- color-scheme:dark;
- --bg:rgb(4 20 32);--bg2:rgb(6 30 46);--card:rgb(8 40 58);--card2:rgb(10 48 68);
- --surface-0:rgb(6 32 48);--surface-1:rgb(8 40 58);--surface-2:rgb(7 36 53);--surface-3:rgb(12 54 76);
- --text:rgb(224 246 252);--muted:rgb(128 178 196);--border:rgb(22 78 102);
- --accent:rgb(34 211 238);--accent2:rgb(56 189 248);--accent3:rgb(45 212 191);
- --accent-soft:rgb(103 232 249);--accent2-soft:rgb(125 211 252);
- --ok:rgb(45 212 191);--warn:rgb(251 146 60);--bad:rgb(244 114 182);
- --ok-text:rgb(94 234 212);--warn-text:rgb(253 186 116);--bad-text:rgb(249 168 212);
- --on-accent:rgb(4 20 32);--hero-a:rgb(8 65 92);--hero-b:rgb(15 45 80);--reported-bg:rgb(8 52 52);
- --shadow:0 16px 42px rgba(0,20,32,.5);
-}
-html[data-theme="forest"]{
- color-scheme:dark;
- --bg:rgb(10 22 16);--bg2:rgb(14 32 22);--card:rgb(18 42 29);--card2:rgb(22 50 34);
- --surface-0:rgb(14 34 23);--surface-1:rgb(18 42 29);--surface-2:rgb(16 38 26);--surface-3:rgb(26 58 39);
- --text:rgb(232 246 235);--muted:rgb(150 182 158);--border:rgb(44 84 57);
- --accent:rgb(132 204 22);--accent2:rgb(163 230 53);--accent3:rgb(52 211 153);
- --accent-soft:rgb(190 242 100);--accent2-soft:rgb(217 249 157);
- --ok:rgb(74 222 128);--warn:rgb(234 179 8);--bad:rgb(248 113 113);
- --ok-text:rgb(134 239 172);--warn-text:rgb(253 224 71);--bad-text:rgb(252 165 165);
- --on-accent:rgb(10 22 16);--hero-a:rgb(20 68 38);--hero-b:rgb(30 58 26);--reported-bg:rgb(20 52 34);
- --shadow:0 16px 42px rgba(6,20,12,.5);
-}
-html[data-theme="sunset"]{
- color-scheme:dark;
- --bg:rgb(30 16 26);--bg2:rgb(44 22 32);--card:rgb(58 30 40);--card2:rgb(70 36 46);
- --surface-0:rgb(44 24 33);--surface-1:rgb(58 30 40);--surface-2:rgb(50 27 37);--surface-3:rgb(84 44 54);
- --text:rgb(255 238 236);--muted:rgb(196 152 158);--border:rgb(110 58 70);
- --accent:rgb(251 146 60);--accent2:rgb(244 114 182);--accent3:rgb(250 204 21);
- --accent-soft:rgb(253 186 116);--accent2-soft:rgb(249 168 212);
- --ok:rgb(74 222 128);--warn:rgb(250 204 21);--bad:rgb(248 113 113);
- --ok-text:rgb(134 239 172);--warn-text:rgb(253 224 71);--bad-text:rgb(252 165 165);
- --on-accent:rgb(30 16 26);--hero-a:rgb(120 40 50);--hero-b:rgb(90 30 70);--reported-bg:rgb(60 30 35);
- --shadow:0 16px 42px rgba(30,10,20,.5);
-}
-html[data-theme="violet"]{
- color-scheme:dark;
- --bg:rgb(16 12 32);--bg2:rgb(24 18 48);--card:rgb(34 26 64);--card2:rgb(42 32 76);
- --surface-0:rgb(24 18 46);--surface-1:rgb(34 26 64);--surface-2:rgb(29 22 55);--surface-3:rgb(52 40 92);
- --text:rgb(240 236 255);--muted:rgb(160 150 200);--border:rgb(70 56 120);
- --accent:rgb(192 132 252);--accent2:rgb(129 140 248);--accent3:rgb(232 121 249);
- --accent-soft:rgb(216 180 254);--accent2-soft:rgb(165 180 252);
- --ok:rgb(74 222 128);--warn:rgb(251 191 36);--bad:rgb(248 113 113);
- --ok-text:rgb(134 239 172);--warn-text:rgb(253 224 71);--bad-text:rgb(252 165 165);
- --on-accent:rgb(16 12 32);--hero-a:rgb(76 29 149);--hero-b:rgb(49 46 129);--reported-bg:rgb(40 30 70);
- --shadow:0 16px 42px rgba(16,8,32,.55);
-}
-html[data-theme="mono"]{
- color-scheme:light;
- --bg:rgb(250 250 248);--bg2:rgb(240 240 236);--card:rgb(255 255 253);--card2:rgb(246 246 242);
- --surface-0:rgb(248 248 244);--surface-1:rgb(255 255 253);--surface-2:rgb(238 238 233);--surface-3:rgb(228 228 222);
- --text:rgb(28 28 26);--muted:rgb(108 108 102);--border:rgb(204 204 196);
- --accent:rgb(55 65 81);--accent2:rgb(87 83 78);--accent3:rgb(71 85 105);
- --accent-soft:rgb(55 65 81);--accent2-soft:rgb(87 83 78);
- --ok:rgb(22 101 52);--warn:rgb(154 88 5);--bad:rgb(190 18 60);
- --ok-text:rgb(22 101 52);--warn-text:rgb(154 88 5);--bad-text:rgb(190 18 60);
- --on-accent:rgb(255 255 253);--hero-a:rgb(232 232 226);--hero-b:rgb(240 238 230);--reported-bg:rgb(232 244 236);
- --shadow:0 12px 34px rgba(20,20,18,.10);
-}
-html[data-theme="mono"] body{font-family:Georgia,"Times New Roman",serif}
+__THEME_CSS__
+__DESIGN_CSS__
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(1200px 600px at 10% -10%,var(--hero-a) 0%,transparent 60%),radial-gradient(1000px 500px at 90% 0%,var(--hero-b) 0%,transparent 60%),var(--bg);color:var(--text);min-height:100vh}
 .wrap{max-width:1440px;margin:0 auto;padding:24px}
@@ -1391,6 +1595,7 @@ __MM_CSS__
 </style>
 </head>
 <body>
+<div class="nvds-ambient"></div><div class="nvds-grid"></div>
 <div class="wrap">
 <header class="topbar">
   <div class="brand">
@@ -1418,7 +1623,9 @@ __MM_CSS__
     </label>
     <button class="music-btn" id="musicBtn" onclick="toggleMusicPanel()" title="背景音乐"><span class="music-note">🎵</span><span id="musicLabel">音乐</span></button>
     <button class="version-btn" onclick="showVersion()" title="查看版本与更新记录"><span class="v-dot"></span>v__APP_VERSION__ · 更新</button>
-    <button class="version-btn" onclick="location.href='/admin'" title="后台管理"><span>⚙️</span>后台</button>
+    <a class="version-btn" href="/admin" title="后台管理"><span>⚙️</span>后台</a>
+    <span class="version-btn" title="当前登录账号"><span>👤</span>__USERNAME__</span>
+    <a class="version-btn" href="/logout" title="退出登录"><span>↪</span>退出</a>
   </div>
 </header>
 <div class="nav">
@@ -1652,6 +1859,7 @@ __MM_CSS__
 </div>
 
 <script>
+__SHELL_JS__
 const APP_VERSION='__APP_VERSION__';
 const STYPE_LABEL={media:'Top30 媒体',fact_checker:'专业核查',search_engine:'搜索引擎',authority:'权威机构',untrusted:'未通过白名单'};
 const THEMES=[
@@ -2457,7 +2665,11 @@ setInterval(loadSystem,30000);
 </body>
 </html>"""
     return HTMLResponse(
-        html.replace("__APP_VERSION__", VERSION)
+        html.replace("__USERNAME__", username)
+            .replace("__APP_VERSION__", VERSION)
+            .replace("__THEME_CSS__", THEME_CSS)
+            .replace("__DESIGN_CSS__", DESIGN_CSS)
+            .replace("__SHELL_JS__", SHELL_JS)
             .replace("__RELEASE_DATE__", RELEASE_DATE)
             .replace("__CODENAME__", CODENAME)
             .replace("__TOP_MEDIA_COUNT__", str(len(TOP_MEDIA)))

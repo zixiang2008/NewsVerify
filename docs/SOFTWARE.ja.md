@@ -1,6 +1,6 @@
 # NewsVerify ソフトウェア仕様書
 
-**バージョン：** 0.7.3（Canvas） · **リリース日：** 2026-11-19  
+**バージョン：** 0.8.0（Vault） · **リリース日：** 2026-11-19  
 **リポジトリ：** https://github.com/zixiang2008/NewsVerify  
 **公開コンソール：** https://new.caishen.today（LAN：`http://192.168.8.253:8095`）
 
@@ -266,6 +266,17 @@ curl -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
 - **すべてのニュースに専用マップ**：`renderEvents()` が各カードで `mmRenderMinis()` を呼び、4分岐のミニマップを表示。クリックで完全な6分岐マップへ。詳細モーダルは `mmRenderInlineDetail()` で対話型マップを埋め込み、ポーリングのビュー分離も維持。
 - **共有**：`POST /api/mindmap/share` がスナップショットを `mindmap_shares` に保存し、ランダムトークン URL を返す。`GET /share/{token}` は公開の読み取り専用ページ（レイアウト/テーマ切替、SVG/PNG 書き出し）で、QR は segno で生成。共有内容は静的スナップショットで管理認証情報を含まず、削除 API で無効化可能。ミドルウェアは共有ページとスナップショット GET のみ PIN なしで許可。
 - **可読性**：6色の凡例、分岐アイコン、短い読図ヒント、展開/折りたたみとズームに対応。SVG と 2倍解像度 PNG の書き出しはすべてローカルで行い、外部サービスに依存しない。
+
+---
+
+## 7.9 v0.8.0 の新機能：デザイン基盤、アカウント、Agent API
+
+- **NVDS** はテーマと部品を `app/web/design.py` に集約。コンソール、ログイン、登録、管理画面、API コンソールが同じトークン・サーフェス・モーションを使用します。
+- **アカウント**：ログインは「ユーザー名 + 4 桁 PIN」。`/register` は 6 桁招待コードが必要。セッションは HMAC 署名 Cookie。組み込みスーパー管理者 `caishen/1314` と `kayla/0720` を起動時に作成。
+- **招待コード管理**（`/admin/accounts`）：1〜200 件を一括生成、権限・回数・有効期限を設定、登録 URL 入りの説明を個別/一括コピー、いつでも取り消し可能。
+- **API Key**（`/admin/api`）：read/write/admin 権限で作成、有効/無効・削除・呼び出し回数・最終利用時刻を管理。実行時設定は DB に保存。
+- **Agent 向け API**：`/api/v1/query/news`、`/api/v1/events/{id}/process`、`/api/v1/events/{id}/mindmap`、`/api/v1/jobs/{id}`、`/api/v1/keys/me`。
+- **デバッグ**：パラメータ一覧、ライブ実行、cURL / Python / JavaScript サンプルとコピー可能な Agent システムプロンプトを生成。
 
 ---
 

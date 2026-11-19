@@ -176,6 +176,65 @@ class MindmapShare(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class User(Base):
+    """Console account. Login = username + 4-digit PIN (never a bare PIN)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    pin_hash: Mapped[str] = mapped_column(String(128), default="")
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    role: Mapped[str] = mapped_column(String(32), default="user")  # super_admin / user
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    invited_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InviteCode(Base):
+    """Six-digit registration code, optionally multi-use and expiring."""
+
+    __tablename__ = "invite_codes"
+
+    code: Mapped[str] = mapped_column(String(6), primary_key=True)
+    role: Mapped[str] = mapped_column(String(32), default="user")
+    note: Mapped[str] = mapped_column(Text, default="")
+    batch: Mapped[str] = mapped_column(String(36), default="", index=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ApiKey(Base):
+    """Management key used by external Agents via the /api/v1 surface."""
+
+    __tablename__ = "api_keys"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    scopes: Mapped[list] = mapped_column(JSON, default=list)  # read / write / admin
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ApiSetting(Base):
+    """Runtime-overridable API settings, edited from the admin console."""
+
+    __tablename__ = "api_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
 class RatingSnapshot(Base):
     __tablename__ = "rating_snapshots"
 

@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.7.3（Canvas） · 文档更新：2026-11-19
+> 软件版本：0.8.0（Vault） · 文档更新：2026-11-19
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.7.3）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.8.0）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -455,3 +455,12 @@ $DOCKER compose logs -f bot worker
 - **分享链**：`MindmapShare` 表（token/event_id/model JSON/layout/views/created_at）；`POST /api/mindmap/share` 建快照，`GET /share/{token}` 公开只读页（布局/主题/导出），`GET /api/mindmap/share/{token}/qrcode` 生成 segno 二维码，`DELETE` 撤销。中间件只对分享页和快照 GET 放行，写接口与其余 API 仍需 PIN。
 - **导出**：`mmBuildSVG()` 从同一几何数据生成独立 SVG（文字自动折行），PNG 通过 SVG→Image→Canvas 生成 2 倍分辨率图，全部本地完成。
 - **验证**：`py_compile`；渲染后首页单 `<script>` 68699 字符 `node --check` 通过；分享页脚本 `node --check` 通过；三布局几何测试（16 节点 / 15 连线）与迷你脑图（5 节点 / 4 连线）通过；分享接口与公开路径端到端验证。
+
+### 13.12 v0.8.0：NVDS 设计框架、账号体系与 Agent API
+
+- **需求**：全面梳理代码并引入页面设计框架做整体美化；登录改为用户名 + 四位 PIN，新增注册页与六位邀请码，内置两个超级管理员并可批量生成可分享注册码；后台提供完整的 API 设置/查询接口、管理 Key 与供其他 Agent 接入的说明及调试代码。
+- **设计框架**：新增 `app/web/design.py`（`THEME_CSS` 从 app.py 抽出，成为九套主题的唯一来源）+ `DESIGN_CSS` 组件库 + `SHELL_JS` 通用复制/提示；控制台通过 `__THEME_CSS__`/`__DESIGN_CSS__`/`__SHELL_JS__` 占位符注入，登录/注册/后台/API 页通过 `page_shell()` 共享同一视觉语言。
+- **账号**：`app/web/auth.py`（HMAC 会话令牌、PIN 单向哈希、内置管理员播种、邀请码注册）、`app/web/auth_pages.py`；中间件 `session_auth()` 区分公开页、普通会话与超级管理员会话。
+- **邀请码**：`User`/`InviteCode` 模型；`/admin/accounts` 批量生成、设类别/次数/有效期、生成带注册地址的说明文本、一键复制与撤销。
+- **API**：`ApiKey`/`ApiSetting` 模型；`verify_api_key()` 改为数据库 Key 校验并兼容旧环境变量；`/admin/api` 控制器包含 Key 管理、运行时设置、接口目录、在线调试、cURL/Python/JS 代码与 Agent 系统提示词；`app/web/api_process.py` 提供全过程资料与脑图模型。
+- **验证**：Python 全量编译；所有页面渲染后 `node --check` 通过；账号端到端（登录/播种/邀请生成/注册/复用拒绝/后台隔离）与 API 端到端（Key 权限/设置/查询/全过程/脑图/任务）均通过。

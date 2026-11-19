@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.7.3 (Canvas)** · 2026-11-19.
+**Self-hosted, auditable fact-checking workspace.** Version **0.8.0 (Vault)** · 2026-11-19.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -22,6 +22,14 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | English | Six systems and verdict rules |
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
+
+## What is new in 0.8.0
+
+- Unified **NVDS design framework**: shared tokens, glass topbar, mesh ambience, component library and motion across console, auth, admin and API pages; all nine themes still work.
+- **Username + 4-digit PIN login**, separate registration page with a 6-digit invitation code, signed sessions and logout. Built-in super admins: `caishen/1314`, `kayla/0720`.
+- Super admins generate batches of invitation codes with role, usage limit and expiry; each ships with a registration URL and copy-ready instructions.
+- Managed **API keys** with read/write/admin scopes, usage counters and runtime API settings; new query APIs including full process records and mind-map models.
+- New **`/admin/api` console** with endpoint catalogue, live debugger, generated cURL/Python/JS snippets and a copyable Agent system prompt.
 
 ## What is new in 0.7.3
 

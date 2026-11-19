@@ -6,9 +6,9 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.7.3"
+VERSION = "0.8.0"
 RELEASE_DATE = "2026-11-19"
-CODENAME = "Canvas"
+CODENAME = "Vault"
 
 THEMES = [
     {"key": "aurora", "name": "极光 · Aurora", "description": "深蓝玻璃质感，默认风格"},
@@ -23,6 +23,22 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.8.0",
+        "date": "2026-11-19",
+        "codename": "Vault",
+        "summary": "全站设计框架 NVDS、账号 + PIN 登录与邀请码注册、超级管理员 API 管理与 Agent 调试控制台",
+        "changes": [
+            "新增 NewsVerify Design System（NVDS）：统一设计令牌、玻璃质感顶栏、分层mesh背景、卡片/按钮/输入框/表格/代码框组件库与动效，九套主题在控制台、登录、注册、后台与 API 控制台全部一致生效",
+            "登录从单一 PIN 改为「用户名 + 4 位 PIN」；新增独立注册页（用户名 + 4 位 PIN + 6 位邀请码）与退出登录，会话改为带 HMAC 签名的账号令牌",
+            "内置超级管理员 caishen/1314 与 kayla/0720，启动时幂等播种；后台登录同样使用账号 + PIN，普通用户无法进入后台",
+            "超级管理员可批量生成 1–200 个六位邀请码，设置类别、可用次数与有效期；每个码附带注册地址与使用说明，支持单独或批量一键复制分享，可随时撤销",
+            "新增后端 API Key 体系：超级管理员创建/启停/删除 Key，细分为 read/write/admin 权限，调用自动计数与记录最近使用时间；兼容原 API_KEY 环境变量",
+            "新增运行时 API 设置接口：总开关、写操作开关、查询上限、对外基础地址与 Agent 提示，数据库保存、即时生效、无需重启",
+            "新增查询接口：/api/v1/query/news、/api/v1/events/{id}/process（全过程资料）、/api/v1/events/{id}/mindmap、/api/v1/jobs/{id}、/api/v1/keys/me",
+            "新增 /admin/api 控制台：完整接口目录与参数说明、在线调试请求、自动生成 cURL/Python/JavaScript 代码与可直接复制的 Agent 系统提示词",
+        ],
+    },
     {
         "version": "0.7.3",
         "date": "2026-11-19",

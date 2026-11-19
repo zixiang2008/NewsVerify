@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.7.3 (Canvas) · **Release date:** 2026-11-19  
+**Version:** 0.8.0 (Vault) · **Release date:** 2026-11-19  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 
@@ -266,6 +266,17 @@ For every release:
 - **A map for every story**: `renderEvents()` calls `mmRenderMinis()` so each task card carries a four-branch mini map; clicking it opens the full six-branch map. The detail modal embeds an interactive map via `mmRenderInlineDetail()` while keeping polling view isolation.
 - **Sharing**: `POST /api/mindmap/share` stores a snapshot in `mindmap_shares` and returns a random token URL. `GET /share/{token}` is a public read-only page (layout/theme switching, SVG/PNG export) with a segno QR code. Shared content is a static snapshot containing no admin credentials; the delete endpoint revokes a link. The middleware allows only the share page and snapshot GET through without PIN.
 - **Readability**: six-colour legend, branch icons, short reading hints, expand/collapse and zoom. SVG and 2× PNG exports are generated locally with no external dependency.
+
+---
+
+## 7.9 New in v0.8.0 — design system, accounts and Agent API
+
+- **NVDS** centralises themes and components in `app/web/design.py`; the console, login, registration, admin and API console all use the same tokens, surfaces and motion.
+- **Accounts**: login is `username + 4-digit PIN`; `/register` needs a 6-digit invitation code; sessions are HMAC-signed cookies. Built-in super admins `caishen/1314` and `kayla/0720` are seeded on startup.
+- **Invitation management** at `/admin/accounts`: batch generate codes (1–200), choose role, usage limit and expiry, copy per-code or batch instructions containing the registration URL, and revoke codes.
+- **API keys** at `/admin/api`: create keys with `read`/`write`/`admin` scopes, enable/disable, revoke, counters and last-used timestamps. Runtime settings (master switch, write switch, result cap, public base URL, Agent note) persist in the database.
+- **Agent-facing APIs**: `/api/v1/query/news`, `/api/v1/events/{id}/process`, `/api/v1/events/{id}/mindmap`, `/api/v1/jobs/{id}`, `/api/v1/keys/me`.
+- **Debugging**: the API console renders request parameters, executes live calls, and generates cURL / Python / JavaScript samples plus a copyable Agent system prompt.
 
 ---
 
