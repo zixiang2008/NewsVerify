@@ -1,6 +1,6 @@
 # NewsVerify Software Specification
 
-**Version:** 0.8.0 (Vault) · **Release date:** 2026-11-19  
+**Version:** 0.8.3 (Sieve) · **Release date:** 2026-11-23  
 **Repository:** https://github.com/zixiang2008/NewsVerify  
 **Live console:** https://new.caishen.today (LAN: `http://192.168.8.253:8095`)
 

@@ -72,6 +72,27 @@ SEARCH_ENGINE_DOMAINS: set[str] = {
 }
 
 # ---------------------------------------------------------------------------
+# Tier 4a: 中文权威媒体/国家通讯社（D1 fix, 2026-11-22）。
+# 这些是国家级通讯社与官方媒体，提供可核验的中文一手报道，用于中文常识/
+# 文化类命题——此前白名单全是西方媒体，这类命题系统性取不到证据。
+# 与内容农场/聚合站严格区分：百度/知乎/搜狐等仍在 BLOCKED_DOMAINS。
+# 每条候选仍必须经过 search.filter_relevant 的字面相关性闸门，扩大域名范围
+# 不会让无关文章重新进入证据池。
+# ---------------------------------------------------------------------------
+CN_AUTHORITY_DOMAINS: set[str] = {
+    "news.cn",             # 新华网 / 新华社
+    "xinhuanet.com",       # 新华网
+    "people.com.cn",       # 人民网 / 人民日报
+    "cctv.com",            # 央视网
+    "cntv.cn",             # 央视网
+    "chinanews.com.cn",    # 中国新闻网 / 中新社
+    "gov.cn",              # 中国政府网
+    "cri.cn",              # 国际在线
+    "gmw.cn",              # 光明网
+    "ce.cn",               # 中国经济网
+}
+
+# ---------------------------------------------------------------------------
 # Tier 4: authoritative primary sources (government / intergovernmental /
 # scholarly institutions) that may serve as reviewable reference material.
 # ---------------------------------------------------------------------------
@@ -87,7 +108,7 @@ AUTHORITY_DOMAINS: set[str] = {
     "science.org",
     "pnas.org",
     "pubmed.ncbi.nlm.nih.gov",
-}
+} | CN_AUTHORITY_DOMAINS
 
 # ---------------------------------------------------------------------------
 # Explicit deny-list. Checked before the whitelist so a broad parent domain
@@ -200,10 +221,11 @@ def source_policy_payload() -> Dict:
         ],
         "fact_checkers": sorted(FACTCHECK_DOMAINS),
         "search_engines": sorted(SEARCH_ENGINE_DOMAINS),
-        "authorities": sorted(AUTHORITY_DOMAINS),
+        "authorities": sorted(AUTHORITY_DOMAINS - CN_AUTHORITY_DOMAINS),
+        "cn_authorities": sorted(CN_AUTHORITY_DOMAINS),
         "blocked_examples": sorted(BLOCKED_DOMAINS),
         "note": (
-            "仅收录全球公信力靠前的媒体、专业事实核查机构、国际搜索引擎入口与权威一手资料机构。"
-            "百度/QQ/搜狐/虎嗅/维基百科等聚合站、百科站与内容农场不进入证据池。"
+            "仅收录全球公信力靠前的媒体、专业事实核查机构、国际搜索引擎入口、权威一手资料机构以及"
+            "新华社/人民日报/央视等中文权威媒体。百度/QQ/搜狐/虎嗅/维基百科等聚合站、百科站与内容农场不进入证据池。"
         ),
     }

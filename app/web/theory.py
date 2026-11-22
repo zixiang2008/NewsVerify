@@ -55,6 +55,29 @@ th{color:var(--accent);font-size:12px}td{color:var(--muted)}
 .reflist .why b{color:var(--accent3)}
 svg{width:100%;height:auto;background:var(--bg2);border:1px solid var(--border);border-radius:12px;margin:10px 0}
 .footer{text-align:center;color:var(--muted);font-size:11px;margin-top:28px}
+@media(max-width:720px){
+  html{-webkit-text-size-adjust:100%}
+  .wrap{padding:18px 12px 44px}
+  header h1{font-size:22px}
+  .kicker{font-size:9px;letter-spacing:1.2px}
+  .sub{font-size:12px;line-height:1.7}
+  .nav{flex-wrap:nowrap;overflow-x:auto;gap:5px;margin:14px -12px 20px;padding:8px 12px;
+    border-radius:0;border-left:none;border-right:none;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .nav::-webkit-scrollbar{display:none}
+  .nav a{flex:0 0 auto;padding:8px 11px;font-size:12px;white-space:nowrap}
+  section{padding:15px 13px;border-radius:14px;margin-bottom:14px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  h2{font-size:17px}h3{font-size:14px;margin:16px 0 5px}
+  p,li{font-size:13px;line-height:1.75}
+  ul,ol{margin-left:18px}
+  table{min-width:600px;font-size:12px}
+  th,td{padding:7px 8px;line-height:1.6}
+  svg{min-width:720px;margin:8px 0}
+  .layer,.callout{font-size:12px;padding:9px 11px}
+  .reflist li{padding:11px 12px;font-size:12px}
+  .reflist .rt{font-size:13px}
+  .cite{font-size:9px;padding:2px 3px}
+  .footer{font-size:10px;line-height:1.7}
+}
 </style></head><body><div class="wrap">
 <header>
   <div class="kicker">NEWSVERIFY · THEORETICAL FOUNDATIONS</div>

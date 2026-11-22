@@ -11,9 +11,13 @@ from __future__ import annotations
 import json
 
 from app.version import VERSION
+from app.web.design import DESIGN_CSS, THEME_CSS
 
 STYLE = """
-.IM-wrap{color:var(--text)}
+body{margin:0;min-height:100vh;color:var(--text);
+  background:radial-gradient(1100px 520px at 10% -10%,var(--hero-a) 0%,transparent 60%),
+             radial-gradient(900px 460px at 92% 0%,var(--hero-b) 0%,transparent 60%),var(--bg)}
+.IM-wrap{max-width:1360px;margin:0 auto;padding:24px;position:relative;z-index:1;color:var(--text)}
 .im-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:14px}
 .im-sub{color:var(--muted);font-size:12px;line-height:1.7}
 .im-badge{display:inline-block;font-size:10px;padding:2px 9px;border-radius:999px;background:#123;color:var(--accent);border:1px solid var(--border)}
@@ -54,6 +58,27 @@ STYLE = """
 .im-qr .qt{font-size:11px;color:var(--muted);line-height:1.8;max-width:330px}
 .im-links a{color:var(--accent);font-size:11px;margin-right:12px}
 .im-pill{font-size:10px;padding:2px 8px;border-radius:999px;background:#123;border:1px solid var(--border);color:var(--muted)}
+@media(max-width:720px){
+  html{-webkit-text-size-adjust:100%}
+  .IM-wrap{max-width:100%;padding:0 2px}
+  .im-head{gap:8px;margin-bottom:12px}
+  .im-head h2{font-size:15px}
+  .im-sub{font-size:11px;line-height:1.65}
+  .im-grid{grid-template-columns:1fr;gap:8px}
+  .im-card{padding:12px}
+  .im-card .im-desc{min-height:0}
+  .im-toolbar{gap:6px}
+  .im-toolbar input,.im-toolbar select,.im-field input,.im-field select,.im-field textarea{font-size:16px;max-width:100%}
+  .im-tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .im-tabs::-webkit-scrollbar{display:none}
+  .im-tab{flex:0 0 auto;padding:11px 12px;font-size:12px;white-space:nowrap}
+  .im-body{padding:12px;max-height:62vh;-webkit-overflow-scrolling:touch}
+  .im-qr{gap:10px}
+  .im-qr img{width:140px;height:140px}
+  .im-urlbox code{min-width:0;font-size:11px}
+  .im-btn{min-height:40px;padding:9px 13px;font-size:12px}
+  .im-result{font-size:11px;line-height:1.7}
+}
 """
 
 JS = r"""
@@ -91,7 +116,8 @@ function openIm(key){
     return '<div class="im-field"><label>'+escI(f.label)+(f.required?' *':'')+'</label>'+input+
       (f.help?'<div class="fh">'+escI(f.help)+'</div>':'')+'</div>';
   }).join('');
-  const inbound=imOrigin()+'/api/v1/im/'+escI(key)+'/webhook';
+  const inbound=imOrigin()+'/api/v1/im/'+escI(key)+'/webhook'+
+    (NV_WEBHOOK_SECRET?'?secret='+encodeURIComponent(NV_WEBHOOK_SECRET):'');
   const qr=(g.qr||{});
   const steps=(g.steps||[]).map(s=>'<li>'+escI(s)+'</li>').join('');
   const p=document.getElementById('imPanel');
@@ -165,11 +191,12 @@ HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
   <div id="imGrid" class="im-grid"></div>
   <div id="imPanel" class="im-panel"></div>
 </div>
-<script>__JS__</script></body></html>"""
+<script>const NV_WEBHOOK_SECRET=__WEBHOOK_SECRET__;__JS__</script></body></html>"""
 
 
-def render_page(guides: dict, catalogue: list) -> str:
+def render_page(guides: dict, catalogue: list, webhook_secret: str = "") -> str:
     js = (JS.replace("__GUIDES__", json.dumps(guides, ensure_ascii=False))
             .replace("__CATALOGUE__", json.dumps(catalogue, ensure_ascii=False)))
-    return (HTML.replace("__STYLE__", STYLE).replace("__JS__", js)
+    return (HTML.replace("__STYLE__", THEME_CSS + DESIGN_CSS + STYLE).replace("__JS__", js)
+                .replace("__WEBHOOK_SECRET__", json.dumps(webhook_secret or ""))
                 .replace("__APP_VERSION__", VERSION))

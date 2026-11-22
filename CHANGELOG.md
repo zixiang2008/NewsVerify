@@ -1,8 +1,40 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.8.0 (Vault, 2026-11-19)**.
+All notable changes to NewsVerify are documented here. The current version is **0.8.3 (Sieve, 2026-11-23)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.8.3 — Sieve (2026-11-23)
+
+逐条修复 v0.8.0 缺陷报告 D1-D8（取证质量与流程状态）：
+
+- **D1 中文取证**：新增 10 家中文权威媒体（新华社/人民网/央视/中新社等，独立 `cn_authorities` 类别，绝不引入百度等内容农场）；中文命题追加中文权威域 site: 检索；Google News RSS 按语言走 zh-CN/en-US 双通道；相关性闸门仍对所有候选生效。
+- **D2 拦截页过滤**：识别并丢弃 Access Denied / Just a moment / enable JS / Forbidden 等反爬挑战页，不再把空页面当成有效证据。
+- **D5 发布时间**：从页面 meta 补全 `published_at`；修复详情页误用不存在的 `reported_at` 导致永远显示「时间未标注」。
+- **D3 广告链治理**：`top_media` 命中剔除 bing.com/aclick、doubleclick、`google.com/url?q=` 等广告/跳转链与搜索引擎入口，不再错配给 AFP。
+- **D4 命中对齐证据**：`check_top_media` 先把实际证据命中的 Top30 媒体按 host 归并（CNN 有证据即点亮），再叠加独立搜索，`media_hits`/`total_reports` 与证据一致。
+- **D6 排队提速**：证据发现三通道并行 + 25s 总上限，site: 超时收紧。
+- **D7 流程状态**：结果完整但 last-mile 异常时任务仍标 done 并记 warning，不再误报 failed。
+- **D8 文本完整**：脑图主张节点超长加省略号并保留 `full_text`，完整主张见 `detail.claims[].text`。
+
+## 0.8.2 — Probe (2026-11-22)
+
+- **Retrieval fault fixed**: the search upstream had been returning one fixed, unrelated BBC travel article for every query, so every claim was judged `insufficient_evidence`. All results from every provider now pass a lexical query-relevance gate; zero-overlap (fixed/cached) results are discarded before they can enter the evidence pool.
+- **Visible degradation**: upstream failures and identical fixed result sets across backends are logged. A new `/api/v1/search/health` endpoint probes whether the upstream actually varies with the query; the system-status panel now runs a real query-diversity probe instead of pinging the search homepage.
+- **RSS fallback restored**: Google News RSS items now carry the real publisher URL from `<source url>`, so trusted outlets are not dropped as `news.google.com` redirects. Malformed publication dates no longer abort the whole feed.
+- **Media attribution fix**: `lstrip("www.")` (a character-set strip that corrupted `washingtonpost.com`) and `md in url` substring matching (which lit up AP for a Chrome support page) were replaced with exact host/subdomain matching.
+- **Confidence fix**: `insufficient_evidence` and `not_checkable` verdicts are capped at 0.35 / 0.5 confidence — no more "insufficient evidence, certainty 1.0" contradictions.
+
+## 0.8.1 — Pocket (2026-11-20)
+
+- **Phone-first layout everywhere**: console, login/registration, admin, API console, IM wizard, theory page and public mind-map share page now share a single mobile layer — two-column header actions, horizontally scrollable nav/tab bars, single-column cards, scrollable tables and long diagrams.
+- **Fixed viewport widening**: grid children with default `min-width:auto` used to expand the 390px console viewport to 620px; now constrained. Inputs use 16px to prevent iOS auto-zoom, with safe-area padding and 44px touch targets.
+- **IM wizard theme fix**: the standalone wizard page now inherits the NVDS theme variables, so all nine themes apply there too.
+- **Security**: inbound IM webhooks are no longer unauthenticated. A persistent `webhook_secret` is generated at startup; the callback URL shown in the wizard carries it automatically. Enabled API keys and the legacy env key are also accepted.
+- **Rate limiting**: `rate_limit_per_min` is now enforced as a per-key 60-second sliding window (HTTP 429 when exceeded) instead of being a decorative setting.
+- **Mode semantics**: `full` = full pipeline + Top30, `method` = methodology pipeline only, `top30` = media-coverage-only fast check. Frontend, worker and API docs now agree.
+- **Concurrency & observability**: invite-code redemption uses an atomic conditional `UPDATE`; IM/tracking push failures are logged instead of silently discarded.
+- **Cleanup**: removed a duplicate `saveTitle`, aligned `created_at`/`sent_at` in the process API, and fixed the undefined `--danger` colour variable.
 
 ## 0.8.0 — Vault (2026-11-19)
 

@@ -113,10 +113,16 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
         if t:
             source_text += f"\n\n[URL {u}]\n{t}"
 
-    # Extract claims
-    claims = await extract_claims(source_text, max_claims=max_claims)
-    await _update_progress(job.id, f"主张拆分完成：{len(claims)} 条")
-    if not claims:
+    # Mode: full = 完整流水线 + Top30；method = 仅方法论流水线；top30 = 仅媒体覆盖快查
+    mode = (payload.get("mode") or "full")
+    media_only = mode == "top30"
+    if media_only:
+        claims = []
+        await _update_progress(job.id, "快速模式：仅执行 Top 30 媒体覆盖核查")
+    else:
+        claims = await extract_claims(source_text, max_claims=max_claims)
+        await _update_progress(job.id, f"主张拆分完成：{len(claims)} 条")
+    if not claims and not media_only:
         claims = [{"text": source_text[:500], "language": "unknown", "checkable": True}]
 
     async with sm() as session:
@@ -201,15 +207,17 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
         await session.commit()
 
     # Top-30 媒体交叉核查（best-effort，并发，带超时）
-    # 对每条主张都核查，前端据此为每条新闻点亮/置灰媒体。
-    mode = (payload.get("mode") or "full")
+    # 前端据此为每条新闻点亮/置灰媒体；method 模式跳过，top30 模式只做这一步。
     top_media_results = []
     top_media_by_claim = []
-    if mode in ("full", "top10", "top30"):
+    if mode in ("full", "top30"):
         try:
             await _update_progress(job.id, f"Top {len(TOP_MEDIA)} 媒体核查开始")
             # 只对最能代表新闻的首条主张做 Top30 媒体覆盖核查（避免逐条核查导致耗时翻倍）
-            r = await check_top_media(claims[0]["text"] if claims else source_text[:200], max_per=2)
+            r = await check_top_media(
+                claims[0]["text"] if claims else source_text[:200],
+                max_per=2, evidence_items=all_evidence_items,
+            )
             top_media_by_claim.append({"claim": claims[0]["text"] if claims else source_text[:200], "media": r})
             top_media_results = r
             hits = sum(1 for x in top_media_results if x.get("hit_count"))
@@ -221,22 +229,35 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
             await _update_progress(job.id, f"Top 30 核查跳过: {str(e)[:60]}")
 
     # Summary for UI
-    summary = "；".join(verdict_lines) if verdict_lines else "无主张"
+    media_hits = sum(1 for x in top_media_results if x.get("hit_count"))
+    if verdict_lines:
+        summary = "；".join(verdict_lines)
+    elif media_only:
+        summary = f"Top 30 媒体覆盖快查：{media_hits} 家媒体报道"
+    else:
+        summary = "无主张"
 
     # Build message
     fp = evidence_fingerprint(all_evidence_items)
-    msg = "核查完成\n\n" + "\n".join(verdict_lines)
+    msg = ("Top 30 媒体覆盖快查" if media_only else "核查完成") + "\n\n" + "\n".join(verdict_lines)
+    if media_only:
+        msg += f"\n媒体报道: {media_hits}/{len(top_media_results)} 家"
     msg += f"\n\n证据条数: {len(all_evidence_items)}\n事件ID: {event_id}"
     if len(msg) > 3800:
         msg = msg[:3800] + "\n…[truncated]"
     if bot is not None and chat_id is not None:
         try:
             await bot.send_message(chat_id, msg, reply_markup=check_keyboard(event_id))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[worker] IM 结果推送失败 job={job.id} chat={chat_id}: {type(e).__name__}: {e}")
 
     # 落实提交时选择的更新频率：核查完成后建立/更新订阅（幂等）。
-    await _ensure_subscription(event_id, freq, chat_id, text)
+    # D7: 订阅是 last-mile 操作，失败不能让一个结果已完整的 job 被标 failed。
+    try:
+        await _ensure_subscription(event_id, freq, chat_id, text)
+    except Exception as e:
+        print(f"[worker] 追踪订阅落实失败（不影响核查结果） job={job.id}: {type(e).__name__}: {e}")
+        await _update_progress(job.id, f"追踪订阅设置失败（结果不受影响）: {str(e)[:60]}")
 
     # store final result on the job, preserving the accumulated progress timeline.
     async with sm() as session:
@@ -336,15 +357,16 @@ async def _broadcast_im(text: str, bot: Bot | None, telegram_chat_id) -> None:
                 continue
             try:
                 await channel.send_message("tracking", IMReply(text=text))
-            except Exception:
+            except Exception as e:
+                print(f"[worker] IM 渠道推送失败 {ch.get('key')}: {type(e).__name__}: {e}")
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[worker] IM 渠道重载失败: {type(e).__name__}: {e}")
     if bot is not None and telegram_chat_id:
         try:
             await bot.send_message(telegram_chat_id, text)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[worker] Telegram 追踪推送失败 chat={telegram_chat_id}: {type(e).__name__}: {e}")
 
 
 async def run_worker() -> None:
@@ -392,8 +414,23 @@ async def run_worker() -> None:
                         async with sm() as s2:
                             jj = await s2.get(Job, j.id)
                             if jj is not None:
-                                jj.status = "failed"
-                                jj.error = str(e)[:2000]
+                                # D7 fix: 核心结果（verdicts/evidence）已在前面的 session
+                                # 提交且 event=done 时，即便 last-mile 步骤抛错也必须把
+                                # job 标为 done——否则监控看到 failed 但详情数据完整。
+                                result = jj.result or {}
+                                core_complete = bool(result.get("event_id")) and bool(result.get("fingerprint"))
+                                if core_complete:
+                                    jj.status = "done"
+                                    jj.error = None
+                                    res = dict(result)
+                                    warns = list(res.get("warnings") or [])
+                                    warns.append(f"last-mile 步骤异常（结果完整）: {str(e)[:200]}")
+                                    res["warnings"] = warns[-10:]
+                                    jj.result = res
+                                    flag_modified(jj, "result")
+                                else:
+                                    jj.status = "failed"
+                                    jj.error = str(e)[:2000]
                                 jj.finished_at = datetime.now(timezone.utc)
                                 await s2.commit()
             # Process due subscriptions

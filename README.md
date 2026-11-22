@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.8.0 (Vault)** · 2026-11-19.
+**Self-hosted, auditable fact-checking workspace.** Version **0.8.3 (Sieve)** · 2026-11-23.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -22,6 +22,25 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | English | Six systems and verdict rules |
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
+
+## What is new in 0.8.3
+
+- **Defect-report fixes D1–D8**: Chinese-language claims now retrieve evidence from 10 Chinese authority outlets (Xinhua, People's Daily, CCTV, China News Service — no Baidu/content farms), with zh-CN RSS and Chinese-domain `site:` queries; the relevance gate still applies.
+- Anti-bot challenge pages (Access Denied / Just a moment) are dropped instead of counted as evidence; publication dates are read from page metadata and actually shown in the UI.
+- Media coverage now aligns with real evidence: outlets with actual evidence light up, ad/redirect links (`bing.com/aclick`, `doubleclick`) are excluded, so AFP is no longer falsely credited.
+- Jobs with complete results are no longer mis-reported as `failed` when a last-mile step errors; evidence discovery runs in parallel with a 25s cap to shorten queueing.
+
+## What is new in 0.8.2
+
+- **Retrieval fault fixed**: the upstream had returned one fixed, unrelated BBC travel article for every query, causing all claims to be judged `insufficient_evidence`. Every search result now passes a query-relevance gate; fixed/zero-overlap results never enter the evidence pool.
+- New `/api/v1/search/health` probe and a real query-diversity check in the system-status panel detect a degraded search layer instead of silently mis-judging claims.
+- Google News RSS now uses the real publisher URL from `<source url>`; media attribution uses exact host matching; `insufficient_evidence` confidence is capped at 0.35.
+
+## What is new in 0.8.1
+
+- Phone-first layouts across the console, login, admin, API console, IM wizard, theory page and shared mind maps; fixed a 390px viewport being widened to 620px.
+- Inbound IM webhooks now require a persistent secret or an enabled API key; the API `rate_limit_per_min` setting is enforced as a real sliding window.
+- Mode semantics unified (`full` / `method` / `top30`); invite-code redemption is atomic; IM/tracking push failures are logged.
 
 ## What is new in 0.8.0
 

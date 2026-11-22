@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import secrets
+import time
+
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -27,6 +31,7 @@ API_SETTING_DEFAULTS = {
     "allow_write": True,
     "max_results": 100,
     "rate_limit_per_min": 120,
+    "webhook_secret": "",
     "public_base_url": "",
     "agent_note": "通过 X-API-Key 请求头携带管理 Key；先 GET /api/v1/status 验证连通。",
 }
@@ -47,6 +52,23 @@ async def get_api_settings() -> dict:
     except Exception:
         pass
     return out
+
+
+_RATE_BUCKETS: dict[str, list[float]] = {}
+
+
+def _enforce_rate_limit(key: str, limit: int) -> None:
+    """In-process sliding window. A NAS runs a single worker, so this is enough."""
+    if not limit or limit <= 0:
+        return
+    now = time.monotonic()
+    bucket = _RATE_BUCKETS.setdefault(key, [])
+    cutoff = now - 60.0
+    while bucket and bucket[0] <= cutoff:
+        bucket.pop(0)
+    if len(bucket) >= limit:
+        raise HTTPException(status_code=429, detail="rate limit exceeded")
+    bucket.append(now)
 
 
 async def verify_api_key(request: Request):
@@ -83,6 +105,7 @@ async def verify_api_key(request: Request):
                 rec.calls = (rec.calls or 0) + 1
                 rec.last_used_at = now_utc()
                 await session.commit()
+                _enforce_rate_limit(key, int(settings.get("rate_limit_per_min") or 0))
                 request.state.api_key = {"key": key, "name": rec.name, "scopes": scopes}
                 return True
     except HTTPException:
@@ -91,7 +114,8 @@ async def verify_api_key(request: Request):
         pass
 
     expected = os.getenv("API_KEY", "") or getattr(get_settings(), "api_key", "")
-    if expected and key == expected:
+    if expected and secrets.compare_digest(str(key), str(expected)):
+        _enforce_rate_limit(key, int(settings.get("rate_limit_per_min") or 0))
         request.state.api_key = {"key": key, "name": "legacy env key", "scopes": ["read", "write", "admin"]}
         return True
     raise HTTPException(status_code=401, detail="invalid API key")
@@ -107,6 +131,24 @@ async def _load_im_channels():
         await nv_auth.seed_super_admins(get_sessionmaker())
     except Exception as exc:
         print("admin seed failed:", exc)
+    try:
+        from sqlalchemy import select
+        from app.db.models import ApiSetting
+        sm = get_sessionmaker()
+        async with sm() as session:
+            row = (await session.execute(select(ApiSetting).where(ApiSetting.key == "webhook_secret"))).scalars().first()
+            if row and isinstance(row.value, dict) and row.value.get("value"):
+                app.state.webhook_secret = str(row.value["value"])
+            else:
+                token = secrets.token_urlsafe(24)
+                app.state.webhook_secret = token
+                if row:
+                    row.value = {"value": token}
+                else:
+                    session.add(ApiSetting(key="webhook_secret", value={"value": token}))
+                await session.commit()
+    except Exception as exc:
+        print("webhook secret init failed:", exc)
     try:
         app.state.public_base_url = (await get_api_settings()).get("public_base_url", "") or ""
     except Exception:
@@ -499,6 +541,8 @@ async def admin_api_settings_put(request: Request):
         await session.commit()
     if "public_base_url" in body:
         app.state.public_base_url = str(body["public_base_url"] or "").strip()
+    if "webhook_secret" in body:
+        app.state.webhook_secret = str(body["webhook_secret"] or "")
     return {"ok": True, "settings": await get_api_settings()}
 
 
@@ -511,7 +555,8 @@ async def admin_channels():
 async def admin_im_wizard():
     """Interactive, guided IM onboarding console."""
     from app.web.im_wizard import render_page
-    return HTMLResponse(render_page(CHANNEL_GUIDES, public_catalogue()))
+    return HTMLResponse(render_page(CHANNEL_GUIDES, public_catalogue(),
+                                    getattr(app.state, "webhook_secret", "")))
 
 
 @app.get("/api/admin/channels/guide")
@@ -628,14 +673,27 @@ async def admin_channel_test(key: str, request: Request):
 
 @app.post("/api/v1/im/{key}/webhook")
 async def im_webhook(key: str, request: Request):
-    """Unified inbound webhook for all instant-messaging platforms (key-authenticated)."""
-    # API key is not required for inbound platform webhooks; platforms sign their
-    # payloads. For generic channels the caller includes api_key query/header.
-    from app.core.config import get_settings as _gs
-    expected = _gs().api_key
-    supplied = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    if expected and supplied != expected:
-        raise HTTPException(status_code=401, detail="invalid api key")
+    """Unified inbound webhook. Requires a configured webhook secret or an enabled API key."""
+    from sqlalchemy import select
+    from app.db.models import ApiKey
+    settings = await get_api_settings()
+    secret = str(settings.get("webhook_secret") or "")
+    supplied_secret = request.headers.get("X-Webhook-Secret") or request.query_params.get("secret") or ""
+    supplied_key = request.headers.get("X-API-Key") or request.query_params.get("api_key") or ""
+    authorized = bool(secret and secrets.compare_digest(supplied_secret, secret))
+    if not authorized and supplied_key:
+        try:
+            sm = get_sessionmaker()
+            async with sm() as session:
+                rec = (await session.execute(select(ApiKey).where(ApiKey.key == supplied_key))).scalars().first()
+                authorized = bool(rec and rec.enabled)
+        except Exception:
+            authorized = False
+    if not authorized:
+        legacy = os.getenv("API_KEY", "") or getattr(get_settings(), "api_key", "")
+        authorized = bool(legacy and secrets.compare_digest(supplied_key, str(legacy)))
+    if not authorized:
+        raise HTTPException(status_code=401, detail="webhook secret or API key required")
     payload = await request.json()
     signature = request.headers.get("X-Signature", "")
     # Telegram /start = scan-and-bind completion; record the chat for test pushes.
@@ -860,10 +918,14 @@ async def api_event_detail(event_id: str):
                 stype, _ = classify_source(src_url)
                 # 反查该来源属于 Top30 的哪家、名次、事实等级；并取报道/抓取时间
                 rank = None; media_name = None; factual = None
-                dom = (src.domain if src else "") or ""
+                dom = ((src.domain if src else "") or "").lower().strip()
+                if dom.startswith("www."):
+                    dom = dom[4:]
+                # 只按真实 host 匹配，禁止 md in src_url 子串匹配：
+                # 曾导致 URL 参数里含 apnews.com 的支持页被误判为 AP 报道。
                 for m in TOP_MEDIA:
                     md = m["domain"]
-                    if dom == md or dom.endswith("." + md) or md in src_url:
+                    if dom == md or dom.endswith("." + md):
                         rank = m["rank"]; media_name = m["name"]; factual = m.get("factual")
                         break
                 reported_at = None
@@ -1079,6 +1141,19 @@ async def api_v1_status(ok: bool = Depends(verify_api_key)):
     return {"jobs": jobs, "events": events, "active_subscriptions": subs, "version": VERSION}
 
 
+@app.get("/api/v1/search/health")
+async def api_v1_search_health(ok: bool = Depends(verify_api_key)):
+    """检索层健康自检：验证搜索上游是否随查询返回不同、相关的内容。
+
+    /api/v1/status 只反映接口与任务是否存活（2026-11-21 故障时它一直是 200），
+    本端点专门暴露"内容层"健康度：上游返回固定/无关结果时会给出 healthy=false。
+    """
+    from app.verification.search import search_health_probe
+    result = await search_health_probe()
+    result["version"] = VERSION
+    return result
+
+
 @app.get("/api/v1/version")
 async def api_v1_version(ok: bool = Depends(verify_api_key)):
     payload = version_payload()
@@ -1251,10 +1326,14 @@ async def api_v1_event_detail(event_id: str, ok: bool = Depends(verify_api_key))
                 stype, _ = classify_source(src_url)
                 # 反查该来源属于 Top30 的哪家、名次、事实等级；并取报道/抓取时间
                 rank = None; media_name = None; factual = None
-                dom = (src.domain if src else "") or ""
+                dom = ((src.domain if src else "") or "").lower().strip()
+                if dom.startswith("www."):
+                    dom = dom[4:]
+                # 只按真实 host 匹配，禁止 md in src_url 子串匹配：
+                # 曾导致 URL 参数里含 apnews.com 的支持页被误判为 AP 报道。
                 for m in TOP_MEDIA:
                     md = m["domain"]
-                    if dom == md or dom.endswith("." + md) or md in src_url:
+                    if dom == md or dom.endswith("." + md):
                         rank = m["rank"]; media_name = m["name"]; factual = m.get("factual")
                         break
                 reported_at = None
@@ -1401,7 +1480,7 @@ h1{font-size:24px;font-weight:700}
 .music-panel.hide{opacity:0;transform:translateY(14px);pointer-events:none}
 .music-panel h3{font-size:14px;color:var(--accent);margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .music-close{border:1px solid var(--border);background:var(--surface-1);color:var(--muted);border-radius:8px;width:26px;height:26px;line-height:1;cursor:pointer;font-size:16px;transition:all .15s}
-.music-close:hover{color:var(--danger);border-color:var(--danger)}
+.music-close:hover{color:var(--bad);border-color:var(--bad)}
 .music-list{max-height:min(54vh,430px);overflow-y:auto;overflow-x:hidden;padding-right:6px;scrollbar-width:thin;scrollbar-color:var(--accent) var(--surface-2)}
 .music-track{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;border-radius:10px;border:1px solid var(--border);background:var(--surface-0);margin-top:7px;cursor:pointer;font-size:12px;transition:all .15s}
 .music-track:hover{border-color:var(--accent)}
@@ -1608,6 +1687,102 @@ __MM_CSS__
 .node-card .nc-s.done{background:rgba(34,197,94,.15);color:var(--ok-text)}
 .node-card .nc-s.active{background:rgba(56,189,248,.15);color:var(--accent-soft)}
 .node-card .nc-d{color:var(--muted);font-size:11px;margin-top:5px;line-height:1.5}
+
+/* ===== v0.8.1 phone-first console refinements ===== */
+@media(max-width:720px){
+  html{-webkit-text-size-adjust:100%;overflow-x:hidden;max-width:100%}
+  body{overflow-x:hidden;max-width:100%}
+  .wrap{padding:12px 12px calc(20px + env(safe-area-inset-bottom,0px))}
+  header.topbar{position:relative;top:auto;margin:-12px -12px 12px;padding:11px 12px;border-radius:0}
+  .brand{gap:9px;min-width:0}
+  .logo{width:36px;height:36px;flex:0 0 auto;border-radius:10px;font-size:15px}
+  .brand .kicker{font-size:8px;letter-spacing:1.1px;margin-bottom:3px}
+  h1{font-size:19px;line-height:1.25}
+  .sub{font-size:10.5px;line-height:1.45}
+  .header-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;width:100%}
+  .header-actions .theme-switch{grid-column:1/-1;padding:8px 10px;font-size:11px}
+  .header-actions .theme-switch select{flex:1;min-width:0;font-size:16px;padding:7px 8px}
+  .header-actions .version-btn,.header-actions .music-btn{justify-content:center;font-size:11px;padding:9px 8px;min-height:40px}
+  .header-actions .version-btn:last-child{grid-column:1/-1}
+  .nav{position:sticky;top:0;z-index:29;flex-wrap:nowrap;overflow-x:auto;gap:4px;
+    margin:0 -12px 14px;padding:8px 12px;border-radius:0;border-left:none;border-right:none;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .nav::-webkit-scrollbar{display:none}
+  .nav a{flex:0 0 auto;padding:8px 12px;font-size:12px;white-space:nowrap}
+  .section-anchor{scroll-margin-top:58px}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-bottom:14px}
+  .card,.panel{padding:14px;border-radius:14px}
+  .stat .n{font-size:27px}
+  .stat .l{font-size:11px}
+  .layout{gap:12px;margin-bottom:12px}
+  .layout>*,.stats>*,.panel,.panel>*{min-width:0}
+  .panel{overflow-x:hidden}
+  .panel[style*="sticky"]{position:relative!important;top:auto!important}
+  .media-list{height:auto;max-height:min(58vh,440px)}
+  .media-item{padding:11px}
+  .media-item .name{font-size:12px}
+  .media-item .why,.media-item .status,.media-item a{font-size:11px}
+  .src-list{max-height:120px}
+  .track-grid{gap:6px}
+  .track-stat{padding:9px}
+  .track-stat .v{font-size:18px}
+  .setting-row{flex-wrap:wrap;gap:6px}
+  .setting-row label{min-width:72px;font-size:11px}
+  .setting-row select,.setting-row input[type=datetime-local]{font-size:16px;flex:1;min-width:0;max-width:100%;padding:8px}
+  textarea{font-size:16px;padding:11px;min-height:88px}
+  select,input:not([type=range]){font-size:16px}
+  .btn{font-size:14px;min-height:42px;padding:10px 16px}
+  .btn.small,.mini-btn{min-height:34px;padding:7px 10px;font-size:11px}
+  .row,.card-actions{gap:6px}
+  .tabs{gap:5px}
+  .tab{padding:8px 11px;font-size:11px;min-height:36px}
+  .hist{max-height:none}
+  .hitem{padding:12px}
+  .hitem .top{flex-wrap:wrap;gap:6px}
+  .hitem .title{font-size:13px;flex:1 1 100%}
+  .hitem .meta{gap:5px;font-size:10px}
+  .kv{grid-template-columns:1fr;gap:1px 0}
+  .kv .k{font-size:11px}
+  .kv .v{font-size:12px}
+  .note{font-size:11px}
+  .modal-bg{padding:8px;align-items:flex-end}
+  .modal{padding:16px;max-height:calc(100dvh - 16px);border-radius:16px 16px 12px 12px}
+  .modal h2{font-size:18px}
+  .modal h3{font-size:13px;margin:12px 0 5px}
+  .modal p{font-size:12px}
+  .modal .ev{font-size:11px;padding:9px}
+  .modal .media-row{grid-template-columns:1fr}
+  .ev-src-tag{font-size:9px}
+  .method-grid,.node-grid{grid-template-columns:1fr;gap:9px}
+  .method-card{padding:12px}
+  .topo{padding:10px;overflow-x:auto}
+  .topo svg{min-width:560px}
+  .legend{gap:10px;font-size:10px}
+  .sys-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+  .sys-metric{padding:10px}
+  .sys-metric .sm-v{font-size:19px}
+  .api-table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .api-table{min-width:520px;font-size:11px}
+  .api-table th,.api-table td{padding:7px 8px}
+  .sys-foot{gap:5px;font-size:10px}
+  .release-item{padding:10px}
+  .release-item ul{font-size:11px}
+  .music-panel{left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));width:auto;max-height:72dvh;padding:14px}
+  .music-list{max-height:52dvh}
+  .music-track{padding:11px}
+  .music-row input[type=range]{min-height:32px}
+  .footer{gap:8px;font-size:10px}
+  .footer-links{gap:10px}
+}
+@media(max-width:400px){
+  .header-actions{grid-template-columns:1fr 1fr}
+  .header-actions .version-btn,.header-actions .music-btn{font-size:10px;padding:8px 4px}
+  .stats{gap:7px}
+  .stat .n{font-size:24px}
+  .card,.panel{padding:12px}
+  .btn{width:100%}
+  .row .btn,.card-actions .mini-btn{width:auto;flex:1 1 auto}
+}
 </style>
 </head>
 <body>
@@ -1819,10 +1994,10 @@ __MM_CSS__
       <div class="sys-grid" id="sysMetrics">
         <div class="sys-metric"><div class="sm-l">⏳ 采集中…</div></div>
       </div>
-      <table class="api-table">
+      <div class="api-table-scroll"><table class="api-table">
         <thead><tr><th style="width:34%">API / 服务</th><th>地址</th><th style="width:110px">状态</th><th style="width:90px">响应</th></tr></thead>
         <tbody id="sysApis"><tr><td colspan="4" class="note">采集中…</td></tr></tbody>
-      </table>
+      </table></div>
       <div class="sys-foot">
         <span id="sysMeta">当前模型 / 进程信息加载中…</span>
         <span>每 30 秒自动刷新</span>
@@ -2390,11 +2565,13 @@ async function showDetail(id){
       html+=`<h3>证据（${c.evidence.length}）</h3>`;
       for(const ev of c.evidence){
         let tag='';
+        // 时间字段：process 输出 published_at（须先于 retrieved_at），此前误用
+        // 不存在的 reported_at 导致永远显示"时间未标注"（D5 展示侧修复）。
+        const evDate=ev.published_at||ev.retrieved_at||'';
+        const tm=evDate?String(evDate).slice(0,10):'时间未标注';
         if(ev.media_rank){
-          const tm=ev.reported_at?String(ev.reported_at).slice(0,10):'时间未标注';
           tag=`<span class="ev-src-tag">[ <span class="rk">全球可信榜第 ${ev.media_rank} 名 · ${esc(ev.media_name||'')} · ${esc(ev.factual||'')}</span> · <span class="tm">${esc(tm)}</span> ]</span>`;
         }else{
-          const tm=ev.reported_at?String(ev.reported_at).slice(0,10):'时间未标注';
           tag=`<span class="ev-src-tag">[ ${esc(STYPE_LABEL[ev.source_type]||ev.source_type||'来源')} · 非 Top30 榜单 · <span class="tm">${esc(tm)}</span> ]</span>`;
         }
         html+=`<div class="ev"><a href="${ev.url}" target="_blank">${ev.title||ev.domain}</a>${tag}<br>${(ev.snippet||'').slice(0,220)}</div>`;
@@ -2505,7 +2682,6 @@ async function saveTitleFromModal(id){
   await fetch('/api/events/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t})});
   alert('已保存'); loadEvents();
 }
-async function saveTitle(id,el){const t=el.innerText.trim();await fetch('/api/events/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t})});}
 async function submit(){
   const t=document.getElementById('txt').value.trim();
   if(!t){alert('请输入内容');return;}

@@ -6,9 +6,9 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.8.0"
-RELEASE_DATE = "2026-11-19"
-CODENAME = "Vault"
+VERSION = "0.8.3"
+RELEASE_DATE = "2026-11-23"
+CODENAME = "Sieve"
 
 THEMES = [
     {"key": "aurora", "name": "极光 · Aurora", "description": "深蓝玻璃质感，默认风格"},
@@ -23,6 +23,53 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.8.3",
+        "date": "2026-11-23",
+        "codename": "Sieve",
+        "summary": "按 v0.8.0 缺陷报告逐条修复 D1-D8：中文命题取证、反爬拦截页、媒体命中对齐、发布时间与流程状态",
+        "changes": [
+            "D1 中文取证：取证白名单新增新华社/人民网/央视/中新社等 10 家中文权威媒体（独立 cn_authorities 类别，绝不引入百度等内容农场）；中文命题追加中文权威域 site: 检索，Google News RSS 按语言选 zh-CN/en-US 双通道，相关性闸门仍对所有候选生效",
+            "D2 拦截页过滤：抓取后识别 Access Denied / Just a moment / enable JS / Forbidden 等反爬挑战页并丢弃，不再把空页面文本当成有效证据",
+            "D5 发布时间：从页面 article:published_time 等 meta 标签补全 published_at；修复详情页误用不存在的 reported_at 字段导致永远显示「时间未标注」",
+            "D3 广告链治理：top_media 命中剔除 bing.com/aclick、doubleclick、google.com/url?q= 等广告/跳转链与搜索引擎入口，不再错配给 AFP",
+            "D4 媒体命中对齐证据：check_top_media 先把实际证据中命中的 Top30 媒体按 host 归并（CNN 有证据即点亮），再叠加独立搜索发现，media_hits/total_reports 与证据一致",
+            "D6 排队提速：证据发现三通道（原查询/反驳查询/RSS）并行执行并设 25s 总上限，site: 查询超时收紧，减少单条主张等待时间",
+            "D7 流程状态：核对结果完整但 last-mile（订阅/推送）异常时任务仍标 done 并记 warning，不再误报 failed；订阅落实改为 best-effort",
+            "D8 文本完整：脑图主张节点超长显式加省略号并保留 full_text，完整主张见 detail.claims[].text",
+        ],
+    },
+    {
+        "version": "0.8.2",
+        "date": "2026-11-22",
+        "codename": "Probe",
+        "summary": "修复检索层返回固定无关内容导致所有核查判证据不足的故障，新增检索健康自检与降级可见",
+        "changes": [
+            "检索层加固：所有搜索结果（含 DuckDuckGo/Yahoo、Brave、SearXNG、Google Fact Check）必须通过查询词相关性校验，与查询零重叠的固定/缓存结果一律丢弃，不再进入证据池",
+            "上游异常可见：搜索后端无相关结果、跨后端返回相同结果集均记录日志；同批查询出现完全相同的固定结果集时判为上游异常，宁可判证据不足也不把无关内容当证据",
+            "直连兜底：ddgs 库在本机卡在固定响应时，自动绕开它直接请求 Yahoo / DuckDuckGo 公共 HTML 端点解析结果，经隔离与相关性校验后恢复检索，失败不影响主流程",
+            "新增 /api/v1/search/health 检索健康自检端点，用两个语义不同的查询验证上游是否随查询变化；系统状态页的搜索探测从 ping 首页升级为真实查询多样性检测，能发现返回固定结果的半故障",
+            "Google News RSS 通道恢复：从 <source url> 提取真实发布方域名作为候选来源，不再因 news.google.com 跳转链接被判为搜索引擎而全部丢弃；同时修复畸形 pubDate 导致整条 feed 解析失败的问题",
+            "修复媒体归属 bug：top_media 与详情页/过程页的 lstrip(\"www.\") 与 md in url 子串匹配改为精确 host 匹配，杜绝 support.google.com 等页面被算成 AP 报道",
+            "修复置信度矛盾：insufficient_evidence / not_checkable 的置信度上限分别为 0.35 / 0.5，不再出现「证据不足但置信度 1.0」的自相矛盾判定",
+        ],
+    },
+    {
+        "version": "0.8.1",
+        "date": "2026-11-20",
+        "codename": "Pocket",
+        "summary": "全站手机浏览器适配，并修复 Webhook 鉴权、API 限流、模式语义与邀请码并发等逻辑问题",
+        "changes": [
+            "手机端适配：控制台、登录/注册、后台、API 管理、IM 向导、理论页与公开脑图分享页统一加入窄屏布局；顶栏按钮两列排布、导航与标签栏横向滚动、卡片单列堆叠、表格与长图可横向滑动",
+            "修复移动端视口被 grid 子项默认 min-width 撑宽的问题（控制台在 390px 下被撑到 620px），加入输入控件 16px 字号避免 iOS 自动缩放、安全区内边距与 44px 触控目标",
+            "填补 IM 向导页未注入设计系统主题变量的缺口，深色/浅色九套主题在 IM 页一致生效",
+            "安全修复：IM 入站 Webhook 不再免鉴权，必须提供启动时持久化生成的 webhook secret 或已启用的 API Key；向导展示的回调地址自动附带 secret",
+            "API 限流配置（rate_limit_per_min）落地为按 Key 的 60 秒滑动窗口，超限返回 429",
+            "统一 mode 语义：full 为完整流水线 + Top30，method 仅跑方法论流水线，top30 为仅媒体覆盖快查；API 文档与前端选项一致",
+            "邀请码并发注册改为条件 UPDATE 原子扣减，避免超额使用；追踪推送/IM 渠道异常改为可见日志，不再静默吞掉",
+            "清理重复 saveTitle 定义、统一通知接口 created_at/sent_at 字段，修复未定义颜色变量 --danger",
+        ],
+    },
     {
         "version": "0.8.0",
         "date": "2026-11-19",

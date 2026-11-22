@@ -126,6 +126,16 @@ async def register_with_invite(
         if invite.used_count >= invite.max_uses:
             return False, "邀请码使用次数已用完", None
 
+        # Atomic decrement: concurrent registrations cannot over-use one code.
+        from sqlalchemy import update
+        claimed = await session.execute(
+            update(InviteCode)
+            .where(InviteCode.id == invite.id, InviteCode.used_count < InviteCode.max_uses)
+            .values(used_count=InviteCode.used_count + 1)
+        )
+        if claimed.rowcount != 1:
+            return False, "邀请码使用次数已用完，请换一个", None
+
         user = User(
             username=username,
             pin_hash=hash_pin(username, pin),
@@ -134,7 +144,6 @@ async def register_with_invite(
             invited_by=invite.created_by or "",
         )
         session.add(user)
-        invite.used_count += 1
         await session.commit()
         return True, "注册成功，请使用用户名与 PIN 登录", {
             "username": username, "role": user.role, "display_name": user.display_name

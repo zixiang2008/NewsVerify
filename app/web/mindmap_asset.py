@@ -85,12 +85,44 @@ CSS = r"""
 .share-shell .sub{color:var(--muted);font-size:12px;margin:6px 0 14px}
 .share-shell .mm-stage{max-height:70vh;min-height:420px}
 @media(max-width:640px){.share-shell{padding:12px}.mm-stage{min-height:280px}}
+/* ===== Phone-first mind-map refinements ===== */
+@media(max-width:720px){
+  .mm-toolbar{flex-wrap:nowrap;overflow-x:auto;gap:5px;margin:8px -8px;padding:0 8px 6px;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .mm-toolbar::-webkit-scrollbar{display:none}
+  .mm-toolbar>*{flex:0 0 auto}
+  .mm-layout-btn{padding:8px 11px;font-size:12px;min-height:38px}
+  .mm-stage{max-height:54vh;min-height:200px;padding:8px;-webkit-overflow-scrolling:touch}
+  .mm-stage.mini{min-height:90px;max-height:none;padding:4px}
+  .mm-viewport{margin:0}
+  .mm-legend{gap:8px;font-size:9px;line-height:1.6}
+  .mm-hint{font-size:10px;line-height:1.7}
+  .mm-hint::after{content:" 手机端可在画布内左右滑动查看完整链路；点击分支节点可展开或收起。";color:var(--accent-soft)}
+  .mm-overview-grid{grid-template-columns:1fr;gap:8px}
+  .mm-ov-card{padding:11px}
+  .mm-mini-head{gap:6px;font-size:10px}
+  .mm-share-bg{padding:10px;align-items:flex-end}
+  .mm-share-box{width:100%;max-height:calc(100dvh - 20px);overflow:auto;padding:16px;
+    border-radius:16px 16px 12px 12px}
+  .mm-share-box h3{font-size:15px}
+  .mm-share-box input{font-size:16px}
+  .mm-share-qr img{width:140px;height:140px}
+  .share-shell{padding:12px}
+  .share-shell header{gap:8px}
+  .share-shell h1{font-size:18px}
+  .share-shell .sub{font-size:11px}
+  .share-shell .mm-stage{max-height:56vh;min-height:240px}
+}
 """
 
 JS = r"""
 /* ===== NewsVerify mind-map engine v0.7.3 =====
    One model -> three layouts (tree / waterfall / radial), SVG bezier links,
    inline per-news maps, exports and anonymous share links. No external libs. */
+/* The public share page has no logged-in console, so provide a safe fallback
+   for nodes that carry a "view full detail" action. In the console the real
+   showDetail() is already defined and must not be overwritten. */
+if(typeof showDetail!=='function'){window.showDetail=function(){alert('分享快照无法跳转登录后的完整详情，请在控制台打开该新闻。');};}
 const MM_COLORS=['var(--accent)','var(--accent2)','var(--accent3)','rgb(167 139 250)','rgb(245 158 11)','rgb(244 114 182)'];
 const MM_LEGEND=['主张与判定','证据与溯源','媒体覆盖','持续追踪','处理进度','任务历史'];
 const MM_SIZE={root:[218,64],branch:[188,56],leaf:[236,54]};

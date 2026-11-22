@@ -345,6 +345,59 @@ textarea:focus,select:focus,input:focus{border-color:var(--accent);box-shadow:va
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
 }
+
+/* ===== NVDS mobile layer — phone-first refinements =====
+   Kept at the end of DESIGN_CSS so every page that inherits the design
+   system gets the same touch-friendly behaviour. Page-specific overrides
+   are appended after this block by their own templates. */
+@media(max-width:720px){
+  html{-webkit-text-size-adjust:100%}
+  body{font-size:14px;line-height:1.65}
+  .nvds-ambient::before{width:78vw;height:78vw;left:-28vw;top:-30vw;filter:blur(54px);opacity:.36}
+  .nvds-ambient::after{width:70vw;height:70vw;right:-26vw;top:-20vw;filter:blur(54px);opacity:.32}
+  .nvds-grid{background-size:20px 20px;opacity:.22}
+  .nvds-shell{padding:16px 12px calc(28px + env(safe-area-inset-bottom,0px))}
+  .nvds-top{gap:10px;margin-bottom:14px}
+  .nvds-crumb{font-size:11px;line-height:1.5}
+  .nvds-tabsbar{flex-wrap:nowrap;overflow-x:auto;gap:4px;padding:5px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .nvds-tabsbar::-webkit-scrollbar{display:none}
+  .nvds-tabsbar a{flex:0 0 auto;padding:9px 12px;font-size:12px;white-space:nowrap}
+  .nvds-card-pad{padding:16px}
+  .nvds-title{font-size:17px}
+  .nvds-sub{font-size:12px}
+  .nvds-panel-head{gap:8px;margin-bottom:12px}
+  .nvds-panel-head h2{font-size:15px}
+  .nvds-kv{grid-template-columns:1fr;gap:1px 0}
+  .nvds-kv .k{font-size:11px}
+  .nvds-kv .v{font-size:12px}
+  .nvds-flex{gap:8px}
+  .nvds-btn{min-height:42px;padding:10px 14px;font-size:13px}
+  .nvds-btn.sm{min-height:34px;padding:7px 10px;font-size:11px}
+  .nvds-input,.nvds-select,.nvds-textarea{font-size:16px;padding:11px 12px}
+  .nvds-input.center{letter-spacing:4px}
+  .nvds-textarea{min-height:88px}
+  .nvds-codebox{padding:12px}
+  .nvds-codebox pre{max-height:220px;font-size:11px}
+  .nvds-toast{bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:calc(100vw - 32px);text-align:center}
+  .nvds-steps{grid-template-columns:1fr;gap:8px}
+  .nvds-step{padding:12px}
+  .nvds-step .num{font-size:22px}
+  .nvds-table{font-size:11px}
+  .nvds-table th,.nvds-table td{padding:8px}
+  .nvds-scroll{-webkit-overflow-scrolling:touch}
+  .nvds-auth{padding:20px 12px calc(20px + env(safe-area-inset-bottom,0px));align-items:start}
+  .nvds-auth-card{padding:24px 20px 20px;border-radius:18px}
+  .nvds-auth-head{margin-bottom:18px}
+  .nvds-auth-head h1{font-size:20px}
+  .nvds-auth-logo{width:50px;height:50px;font-size:18px}
+  .nvds-auth-foot{font-size:12px}
+  .nvds-grid2,.nvds-grid3,.nvds-side{grid-template-columns:1fr;gap:12px}
+  .nvds-divider{margin:14px 0}
+}
+@media(max-width:400px){
+  .nvds-btn-row .nvds-btn{flex:1 1 100%}
+  .nvds-auth-card{padding:20px 16px}
+}
 """
 
 # ---------------------------------------------------------------------------

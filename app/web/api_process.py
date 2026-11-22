@@ -19,10 +19,28 @@ def _iso(value):
 
 
 def _media_match(url: str, domain: str):
-    dom = domain or ""
+    """Match a source to a Top30 outlet by *host*, never by URL substring.
+
+    A previous ``md in url`` check let any URL whose query string happened to
+    contain a media domain (e.g. a Chrome support page carrying a tracking
+    parameter) light up that outlet. Only an exact host or a genuine subdomain
+    of the outlet counts as a report.
+    """
+    from urllib.parse import urlparse
+
+    host = (domain or "").lower().strip()
+    if not host:
+        try:
+            host = urlparse(url or "").netloc.lower().split("@")[-1].split(":")[0].rstrip(".")
+        except Exception:
+            host = ""
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        return None, None, None
     for m in TOP_MEDIA:
-        md = m.get("domain", "")
-        if md and (dom == md or dom.endswith("." + md) or md in url):
+        md = (m.get("domain") or "").lower()
+        if md and (host == md or host.endswith("." + md)):
             return m.get("rank"), m.get("name"), m.get("factual")
     return None, None, None
 
@@ -104,7 +122,8 @@ async def build_process(session: AsyncSession, event_id: str) -> dict | None:
             "last_run_at": _iso(s.last_run_at),
         } for s in subs],
         "notifications": [{
-            "id": n.id, "kind": n.kind, "content_hash": n.content_hash, "sent_at": _iso(n.sent_at),
+            "id": n.id, "kind": n.kind, "content_hash": n.content_hash,
+            "sent_at": _iso(n.sent_at), "created_at": _iso(n.sent_at),
         } for n in notes],
     }
 
@@ -117,7 +136,11 @@ async def build_process(session: AsyncSession, event_id: str) -> dict | None:
         },
         "branches": [
             {"id": "claims", "icon": "🔬", "title": "主张与判定", "meta": f"{len(claim_list)} 条原子主张",
-             "children": [{"id": f"c{i}", "title": c["text"][:52],
+             # D8: 节点标题为图示摘要，超长时显式加省略号，避免"半句"被误读为
+             # 截断的主张原文；完整主张见 detail.claims[].text（未截断）。
+             "children": [{"id": f"c{i}",
+                           "title": (c["text"][:60] + "…") if len(c["text"]) > 60 else c["text"],
+                           "full_text": c["text"],
                            "sub": f"证据 {len(c['evidence'])} 条" + (f" · 置信 {int((c['verdict'] or {}).get('confidence', 0) * 100)}%" if c["verdict"] else "")}
                           for i, c in enumerate(claim_list)]},
             {"id": "evidence", "icon": "📚", "title": "证据与溯源",

@@ -26,7 +26,9 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
       --exclude='.git' --include='.env.example' --exclude='.env' --exclude='.env.*' \
       --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' \
       "$ROOT/" "$TMP_CLONE/repo/"
-    mv "$TMP_CLONE/repo/.git" "$ROOT/.git"
+    # mv fails with EXDEV when TMPDIR and the project live on different volumes
+    # (e.g. /var/folders -> /Volumes). cp -R + rm is cross-volume safe.
+    cp -R "$TMP_CLONE/repo/.git" "$ROOT/.git"
     rm -rf "$TMP_CLONE"
   else
     git init -b "$BRANCH"

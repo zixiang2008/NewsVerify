@@ -143,6 +143,23 @@ async def _probe_api(name: str, url: str, key: str = "", timeout: float = 6.0) -
     return result
 
 
+async def _probe_search_health(name: str, health: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a search health probe result into the same shape as API probes."""
+    ok = bool(health.get("healthy"))
+    return {
+        "name": name,
+        "url": "query-diversity probe",
+        "online": ok,
+        "latency_ms": None,
+        "detail": (
+            "查询响应正常且随查询变化"
+            if ok else
+            f"检索层降级：{health.get('detail', '返回固定或不相关结果')} "
+            f"(sample {health.get('query_results', 0)}/{health.get('control_results', 0)})"
+        ),
+    }
+
+
 async def get_system_status() -> Dict[str, Any]:
     """汇总系统资源与外部 API 在线状态。"""
     s = get_settings()
@@ -153,14 +170,17 @@ async def get_system_status() -> Dict[str, Any]:
     for i, url in enumerate(endpoints):
         label = "LLM 主 API" if i == 0 else f"LLM 备用 API {i}"
         probes.append(asyncio.create_task(_probe_api(label, url, s.llm_api_key)))
-    # 搜索 API（DuckDuckGo，无 key，用其首页探测）
+    # 搜索层健康探测：不再只 ping 首页（首页 200 无法发现"返回固定无关结果"
+    # 这种半故障）。用两个语义不同的查询验证上游是否真的会随查询变化。
     search_name = f"搜索 ({s.search_provider})"
-    if (s.search_provider or "duckduckgo").lower() == "duckduckgo":
-        probes.append(asyncio.create_task(_probe_api(search_name, "https://duckduckgo.com", "")))
-    elif (s.search_provider or "").lower() == "searxng" and s.searxng_base_url:
-        probes.append(asyncio.create_task(_probe_api(search_name, s.searxng_base_url, "")))
-    elif (s.search_provider or "").lower() == "brave" and s.brave_search_api_key:
-        probes.append(asyncio.create_task(_probe_api(search_name, "https://api.search.brave.com", "")))
+    search_health: Dict[str, Any] = {"healthy": None, "detail": "未探测"}
+    try:
+        from app.verification.search import search_health_probe
+        search_health = await asyncio.wait_for(search_health_probe(), timeout=25)
+        probes.append(asyncio.create_task(_probe_search_health(search_name, search_health)))
+    except Exception as exc:
+        search_health = {"healthy": False, "detail": f"探测失败: {type(exc).__name__}"}
+        probes.append(asyncio.create_task(_probe_search_health(search_name, search_health)))
 
     api_results = await asyncio.gather(*probes, return_exceptions=True)
     apis: List[Dict[str, Any]] = []
@@ -206,6 +226,7 @@ async def get_system_status() -> Dict[str, Any]:
             "process_count": process_count,
         },
         "apis": apis,
+        "search_health": search_health,
         "active_llm_endpoint": active_llm,
         "endpoint_failures": endpoint_failures,
         "config": {

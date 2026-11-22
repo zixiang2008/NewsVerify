@@ -69,7 +69,11 @@ def _match_media(url: str) -> str | None:
     """
     from urllib.parse import urlparse
     try:
-        host = urlparse(url).netloc.lower().lstrip("www.")
+        host = urlparse(url).netloc.lower().split("@")[-1].split(":")[0].rstrip(".")
+        # Remove only a real leading "www." label — lstrip("www.") strips any
+        # leading w/. characters and corrupts e.g. washingtonpost.com -> ashingtonpost.com.
+        if host.startswith("www."):
+            host = host[4:]
     except Exception:
         return None
     aliases = {
@@ -86,12 +90,17 @@ def _match_media(url: str) -> str | None:
     return None
 
 
-async def check_top_media(claim_text: str, max_per: int = 2) -> List[Dict]:
+async def check_top_media(claim_text: str, max_per: int = 2,
+                          evidence_items: List[Dict] | None = None) -> List[Dict]:
     """对一条主张，检查 Top30 媒体中哪些报道了该信息。
 
     快速策略：先做少量通用搜索（避免 30 次 site: 请求被限流），把结果按域名
     归类到榜单；再对未命中的少数重点媒体做补充 site: 查询。返回全部 30 家，
     每家含 hit_count 与 hits，前端据此点亮/置灰。
+
+    2026-11-22 D4 fix: 传入本次实际收集的 evidence_items 时，先把"真正作为
+    证据的报道"按 host 归并进命中（并去重），再叠加独立搜索发现。这样媒体
+    命中与证据一致——不会再出现"CNN 有证据却 0 命中、AFP 0 证据却 2 命中"。
     """
     from app.verification.search import search_duckduckgo
     from app.verification.source_policy import classify_source
@@ -105,13 +114,25 @@ async def check_top_media(claim_text: str, max_per: int = 2) -> List[Dict]:
         }
 
     def _clean(hits):
-        """Drop Baidu/QQ/aggregator results before they reach the UI."""
+        """Drop untrusted / aggregator / search-engine / ad-click results.
+
+        2026-11-22 D3 fix: 广告跳转链（bing.com/aclick → doubleclick → 旅游
+        网站）此前以 search_engine 类别混入 Top30 命中，甚至被子串匹配错配给
+        AFP。搜索引擎入口和广告点击链接不是媒体报道，必须在此剔除。
+        """
+        from urllib.parse import urlparse as _up
         out = []
         for h in hits:
             if not isinstance(h, dict) or not h.get("url") or h.get("title") == "search error":
                 continue
-            category, host = classify_source(h["url"])
-            if category is None:
+            url = h["url"]
+            # 广告点击/追踪跳转，直接丢弃（不进入任何媒体的命中）。
+            low = url.lower()
+            if any(x in low for x in ("/aclick", "/click?", "doubleclick", "googleadservices",
+                                      "go.microsoft.com", "/url?q=")):
+                continue
+            category, host = classify_source(url)
+            if category is None or category == "search_engine":
                 continue
             item = _hit(h)
             item["source_type"] = category
@@ -123,9 +144,30 @@ async def check_top_media(claim_text: str, max_per: int = 2) -> List[Dict]:
     result = {m["rank"]: {
         "rank": m["rank"], "name": m["name"], "url": m["url"], "domain": m["domain"],
         "factual": m.get("factual", ""), "independence": m.get("independence", ""),
-        "type": m.get("type", ""), "hits": [], "hit_count": 0,
+        "type": m.get("type", ""), "hits": [], "hit_count": 0, "from_evidence": False,
     } for m in TOP_MEDIA}
     domain_to_rank = {m["domain"]: m["rank"] for m in TOP_MEDIA}
+
+    # 0) D4: 先把实际证据中命中的 Top30 媒体并入（这是"真实报道"，优先级最高）。
+    #    用 host 精确匹配，绝不接受广告/搜索引擎链。
+    evidence_urls: set[str] = set()
+    for ei in (evidence_items or []):
+        if not isinstance(ei, dict):
+            continue
+        eu = ei.get("url") or ""
+        dom = _match_media(eu)
+        if not dom:
+            continue
+        evidence_urls.add(eu)
+        r = domain_to_rank[dom]
+        slot = result[r]
+        if len(slot["hits"]) < max_per:
+            slot["hits"].append({
+                "title": ei.get("title", ""), "url": eu,
+                "snippet": ei.get("snippet", ""), "source_type": ei.get("source_type", "media"),
+                "from_evidence": True,
+            })
+            slot["from_evidence"] = True
 
     # 1) 通用搜索：2 个查询并行，收集广泛结果并按域名归类（一次请求覆盖多家）
     queries = [claim_text[:160], f"{claim_text[:100]} news report"]
@@ -138,7 +180,7 @@ async def check_top_media(claim_text: str, max_per: int = 2) -> List[Dict]:
             continue
         for h in _clean(res):
             dom = _match_media(h["url"])
-            if dom:
+            if dom and h["url"] not in evidence_urls:
                 r = domain_to_rank[dom]
                 if len(result[r]["hits"]) < max_per:
                     result[r]["hits"].append(_hit(h))
