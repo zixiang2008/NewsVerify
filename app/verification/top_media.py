@@ -102,10 +102,31 @@ async def check_top_media(claim_text: str, max_per: int = 2,
     证据的报道"按 host 归并进命中（并去重），再叠加独立搜索发现。这样媒体
     命中与证据一致——不会再出现"CNN 有证据却 0 命中、AFP 0 证据却 2 命中"。
     """
-    from app.verification.search import search_duckduckgo
+    from app.verification.search import unified_search
     from app.verification.source_policy import classify_source
+    from app.verification.search import filter_relevant
+    from app.ingest.open_web import enhanced_collect, resolve_news_items
     import asyncio
+    import re
     from urllib.parse import urlparse
+
+    async def _discover_hits(query: str, limit: int = 12) -> list[dict]:
+        """Fast dual-channel discovery; ddgs alone is unusable on some NAS nets."""
+        out: list[dict] = []
+        try:
+            cjk = bool(re.search(r"[\u3400-\u9fff]", query))
+            feed = await asyncio.wait_for(
+                enhanced_collect(query[:120], query, max_results=limit), timeout=6)
+            out.extend(await asyncio.wait_for(
+                resolve_news_items(feed.items, limit=limit,
+                                   locale="zh-CN" if cjk else "en-US"), timeout=6))
+        except Exception:
+            pass
+        try:
+            out.extend(await asyncio.wait_for(unified_search(query, max_results=limit), timeout=5))
+        except Exception:
+            pass
+        return filter_relevant(query, out)
 
     def _hit(h):
         return {
@@ -170,11 +191,13 @@ async def check_top_media(claim_text: str, max_per: int = 2,
             slot["from_evidence"] = True
 
     # 1) 通用搜索：2 个查询并行，收集广泛结果并按域名归类（一次请求覆盖多家）
-    queries = [claim_text[:160], f"{claim_text[:100]} news report"]
-    searches = await asyncio.gather(
-        *[asyncio.wait_for(search_duckduckgo(q, max_results=30), timeout=20) for q in queries],
-        return_exceptions=True,
-    )
+    queries = [claim_text[:160]]
+    try:
+        searches = await asyncio.wait_for(
+            asyncio.gather(*[_discover_hits(q, limit=14) for q in queries],
+                           return_exceptions=True), timeout=12)
+    except asyncio.TimeoutError:
+        searches = []
     for res in searches:
         if not isinstance(res, list):
             continue
@@ -188,23 +211,28 @@ async def check_top_media(claim_text: str, max_per: int = 2,
     # 2) 对尚未命中、且是重点媒体（前 6 家）做补充 site: 查询（低并发）
     # 修复：此处 hit_count 尚未计算（第 166 行才赋值），必须按 hits 列表长度判断，
     # 否则已命中的媒体也会被判为“缺失”而重复 site: 查询、覆盖已有结果。
-    missing_top = [m for m in TOP_MEDIA[:6] if len(result[m["rank"]]["hits"]) == 0]
+    missing_top = [m for m in TOP_MEDIA[:4] if len(result[m["rank"]]["hits"]) == 0]
 
     async def _site(m):
-        q = f"site:{m['domain']} {claim_text[:120]}"
+        q = f"site:{m['domain']} {claim_text[:100]}"
         try:
-            hits = await asyncio.wait_for(search_duckduckgo(q, max_results=max_per), timeout=10)
+            hits = await asyncio.wait_for(_discover_hits(q, limit=max_per + 2), timeout=7)
         except Exception:
             hits = []
         return m["rank"], _clean(hits)
 
     if missing_top:
-        # 每批 4 家，避免并发过高被重置
-        for i in range(0, len(missing_top), 4):
-            batch = missing_top[i:i + 4]
-            for rank, hits in await asyncio.gather(*[_site(m) for m in batch], return_exceptions=True):
-                if isinstance(hits, list):
-                    result[rank]["hits"] = hits[:max_per]
+        try:
+            site_results = await asyncio.wait_for(
+                asyncio.gather(*[_site(m) for m in missing_top], return_exceptions=True), timeout=9)
+        except asyncio.TimeoutError:
+            site_results = []
+        for item in site_results:
+            if not isinstance(item, tuple):
+                continue
+            rank, hits = item
+            if isinstance(hits, list):
+                result[rank]["hits"] = hits[:max_per]
 
     # 计算命中数
     for m in TOP_MEDIA:
