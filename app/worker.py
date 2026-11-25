@@ -405,18 +405,20 @@ async def run_worker() -> None:
     except Exception as _e:  # noqa: BLE001
         print(f"[worker] Telegram bot 初始化失败，已降级为不推送模式: {_e}")
     sm = get_sessionmaker()
-    # 僵尸任务回收：worker 崩溃/重启后，超时的 running job 永远卡住。
-    # 启动时把超过 STALE_MINUTES 仍未完成的 running job 重置为 queued 重新处理。
+    # 僵尸任务回收：worker 重启后所有 asyncio 任务都消失，但 DB 里的 job
+    # 仍是 running。旧逻辑只回收超过 10 分钟的任务，导致刚重启时正在处理的
+    # job 永久卡单（2026-11-25 实测）。单副本部署下启动时一律重新排队。
     try:
         from sqlalchemy import update as _update
-        stale_before = datetime.now(timezone.utc) - timedelta(minutes=10)
         async with sm() as session:
-            await session.execute(
+            result = await session.execute(
                 _update(Job)
-                .where(Job.status == "running", Job.started_at < stale_before)
+                .where(Job.status == "running")
                 .values(status="queued", started_at=None)
             )
             await session.commit()
+            if result.rowcount:
+                print(f"[worker] 重启回收 {result.rowcount} 个残留 running 任务")
     except Exception as _e:
         print(f"[worker] 僵尸任务回收失败: {_e}")
     # 2026-11-24 P2 fix: 过去每轮按序处理 5 个 job，单条核查数十秒时队尾
