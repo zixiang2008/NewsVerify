@@ -102,7 +102,6 @@ async def check_top_media(claim_text: str, max_per: int = 2,
     证据的报道"按 host 归并进命中（并去重），再叠加独立搜索发现。这样媒体
     命中与证据一致——不会再出现"CNN 有证据却 0 命中、AFP 0 证据却 2 命中"。
     """
-    from app.verification.search import unified_search
     from app.verification.source_policy import classify_source
     from app.verification.search import filter_relevant
     from app.ingest.open_web import enhanced_collect, resolve_news_items
@@ -113,17 +112,15 @@ async def check_top_media(claim_text: str, max_per: int = 2,
     async def _discover_hits(query: str, limit: int = 12) -> list[dict]:
         """Fast dual-channel discovery; ddgs alone is unusable on some NAS nets."""
         out: list[dict] = []
+        # RSS only here: Top30 is a best-effort best-known-outlets overlay.
+        # ddgs can stall 10+s per backend on NAS and was dominating job runtime.
         try:
             cjk = bool(re.search(r"[\u3400-\u9fff]", query))
             feed = await asyncio.wait_for(
-                enhanced_collect(query[:120], query, max_results=limit), timeout=6)
+                enhanced_collect(query[:120], query, max_results=limit), timeout=5)
             out.extend(await asyncio.wait_for(
                 resolve_news_items(feed.items, limit=limit,
-                                   locale="zh-CN" if cjk else "en-US"), timeout=6))
-        except Exception:
-            pass
-        try:
-            out.extend(await asyncio.wait_for(unified_search(query, max_results=limit), timeout=5))
+                                   locale="zh-CN" if cjk else "en-US"), timeout=5))
         except Exception:
             pass
         return filter_relevant(query, out)

@@ -222,10 +222,10 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
         try:
             await _update_progress(job.id, f"Top {len(TOP_MEDIA)} 媒体核查开始")
             # 只对最能代表新闻的首条主张做 Top30 媒体覆盖核查（避免逐条核查导致耗时翻倍）
-            r = await check_top_media(
+            r = await asyncio.wait_for(check_top_media(
                 claims[0]["text"] if claims else source_text[:200],
                 max_per=2, evidence_items=all_evidence_items,
-            )
+            ), timeout=20)
             top_media_by_claim.append({"claim": claims[0]["text"] if claims else source_text[:200], "media": r})
             top_media_results = r
             hits = sum(1 for x in top_media_results if x.get("hit_count"))
