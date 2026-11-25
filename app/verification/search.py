@@ -123,21 +123,28 @@ async def search_duckduckgo(query: str, max_results: int = 8, retries: int = 1) 
     异常并返回空，宁可让判定走 insufficient_evidence，也不把无关内容当证据。
     """
     # yahoo first (fast/stable on NAS), duckduckgo as fallback.
+    # ddgs is a *synchronous* library: calling it directly inside the event
+    # loop blocks every concurrent discovery channel (2026-11-24 incident:
+    # a 10s ddgs timeout starved the healthy RSS channel). Always offload it.
+    def _ddgs_text(q: str, limit: int, backend_name: str):
+        from ddgs import DDGS
+        with DDGS() as ddgs:
+            return list(ddgs.text(q, max_results=limit, backend=backend_name))
+
     backends = ["yahoo", "duckduckgo"]
     signatures: set[str] = set()
     for backend in backends:
         for attempt in range(retries + 1):
             results: List[Dict[str, str]] = []
             try:
-                from ddgs import DDGS
-                with DDGS() as ddgs:
-                    for r in ddgs.text(query, max_results=max_results, backend=backend):
-                        if r.get("href"):
-                            results.append({
-                                "title": r.get("title", ""),
-                                "url": r.get("href", ""),
-                                "snippet": r.get("body", ""),
-                            })
+                raw = await asyncio.to_thread(_ddgs_text, query, max_results, backend)
+                for r in raw or []:
+                    if r.get("href"):
+                        results.append({
+                            "title": r.get("title", ""),
+                            "url": r.get("href", ""),
+                            "snippet": r.get("body", ""),
+                        })
                 if results:
                     relevant = filter_relevant(query, results)
                     if not relevant:
@@ -285,22 +292,41 @@ async def unified_search(query: str, max_results: int = 8) -> List[Dict[str, str
 
 
 async def search_health_probe(query: str = "Reuters Paris France capital") -> dict:
-    """Run a cheap probe and report whether the upstream actually varies with query.
+    """Probe the *whole discovery layer*, not just one metasearch backend.
 
-    Two semantically different queries must not return the identical fixed result
-    set. Used by /api/v1/status and the admin status panel to surface a degraded
-    retrieval layer instead of silently mis-judging every claim.
+    2026-11-24: the ddgs/Yahoo backend returned fixed unrelated pages on NAS,
+    while Google News RSS (with resolved article URLs) was healthy. A probe
+    that only exercised ddgs reported "degraded" even when evidence collection
+    worked, and vice versa. Two semantically different queries must return
+    different result sets through the combined channels.
     """
+    from app.ingest.open_web import enhanced_collect, resolve_news_items
+
     control = "BBC World News weather forecast tomorrow"
-    a = await search_duckduckgo(query, max_results=3)
-    b = await search_duckduckgo(control, max_results=3)
+
+    async def _discover(q: str) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        try:
+            feed = await enhanced_collect(q[:120], q, max_results=6)
+            out.extend(await resolve_news_items(feed.items, limit=3))
+        except Exception as exc:
+            log.debug("health probe RSS failed: %s: %s", type(exc).__name__, str(exc)[:80])
+        try:
+            out.extend(await unified_search(q, max_results=3))
+        except Exception as exc:
+            log.debug("health probe search failed: %s: %s", type(exc).__name__, str(exc)[:80])
+        return filter_relevant(q, out)
+
+    a, b = await asyncio.gather(_discover(query), _discover(control))
     sig_a = _results_signature(a)
     sig_b = _results_signature(b)
+    ok = bool(a) and bool(b) and sig_a != sig_b
     return {
-        "healthy": bool(a) and bool(b) and sig_a != sig_b,
+        "healthy": ok,
         "query_results": len(a),
         "control_results": len(b),
         "query_signature": sig_a,
         "control_signature": sig_b,
-        "detail": "ok" if (a and b and sig_a != sig_b) else "retrieval appears stale or unavailable",
+        "channels": {"rss": "google_news", "search": get_settings().search_provider},
+        "detail": "ok" if ok else "retrieval appears stale or unavailable",
     }

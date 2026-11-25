@@ -6,9 +6,9 @@ from this module instead of hard-coding a version string.
 
 from __future__ import annotations
 
-VERSION = "0.8.3"
-RELEASE_DATE = "2026-11-23"
-CODENAME = "Sieve"
+VERSION = "0.8.4"
+RELEASE_DATE = "2026-11-25"
+CODENAME = "Beacon"
 
 THEMES = [
     {"key": "aurora", "name": "极光 · Aurora", "description": "深蓝玻璃质感，默认风格"},
@@ -23,6 +23,24 @@ THEMES = [
 ]
 
 RELEASES = [
+    {
+        "version": "0.8.4",
+        "date": "2026-11-25",
+        "codename": "Beacon",
+        "summary": "修复接口全绿但取证全空的检索层故障：恢复 Google News RSS 通道、拦截页换源重试、队列并发与判定守卫",
+        "changes": [
+            "P0 检索层恢复：Google News RSS 曾被 news.google.com 全站 robots.txt 误杀（0 条候选）；现仅对公开 RSS 端点做窄豁免，并修正 hl/gl/ceid 参数",
+            "P0 原文溯源：新增 Google News 文章链接解码，把 <source url> 的媒体首页替换为真实文章 URL；实测「太平洋是地球上最大的海洋」拿到新华社/人民日报/联合国/BBC 等 4 条可打开证据",
+            "P0 事件循环：ddgs 是同步库，超时会阻塞整个 asyncio 事件循环并饿死健康的 RSS 通道；改为 to_thread 执行，三通道完成即并入候选池",
+            "P1 拦截页治理：403/Cloudflare 挑战页标记 fetch_failed、不计入证据、不喂给模型，自动换下一个来源；可选 JINA_READER_FALLBACK 读取代理恢复 AP 等被 CF 拦截的正文",
+            "P2 队列提速：Worker 按 WORKER_CONCURRENCY 并发处理任务，轮询间隔 5s → 2s，消除队尾 5–15 分钟等待",
+            "P3 失败路径：发现通道单通道超时 8/12s、总体 13s，site: 查询改走 Google News RSS 的 site: 语法（新华社/央视网），单条核查从 80+ 秒降到 10–20 秒",
+            "P3 判定守卫：supported/refuted/mixed/outdated 必须带 ≥1 条可打开来源 URL，否则自动降级 insufficient_evidence；cited_urls 只能引用本次证据池中的 URL",
+            "P4 历史记录：v0.8.0 之前「已核实但零证据」的旧事件在 API 与详情页标注 legacy_warning，不改写历史判定",
+            "P5 监控判据：/api/v1/search/health 探测 RSS+搜索双通道的查询多样性；任务结果新增 retrieval_ok 与 warnings，证据全空时不再显示「健康」",
+            "新增 7 项回归测试（RSS locale、robots 窄豁免、Google News ID 解析、拦截页、相关性闸门、判定守卫、引用白名单），共 13 项测试通过",
+        ],
+    },
     {
         "version": "0.8.3",
         "date": "2026-11-23",

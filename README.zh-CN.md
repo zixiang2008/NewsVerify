@@ -1,6 +1,6 @@
 # NewsVerify
 
-**自建、可审计的新闻事实核查工作台。** 版本 **0.8.3（Sieve）** · 2026-11-23。
+**自建、可审计的新闻事实核查工作台。** 版本 **0.8.4（Beacon）** · 2026-11-25。
 
 NewsVerify 会把一段新闻拆成可核查主张，检索开放网络证据，判断来源独立性，输出受约束的六类判定，与 30 家高公信力媒体交叉验证，并持续追踪事件的实质变化。
 
@@ -24,6 +24,14 @@ NewsVerify 会把一段新闻拆成可核查主张，检索开放网络证据，
 | [CHANGELOG.md](CHANGELOG.md) | English | 版本历史 |
 
 详细阅读建议：先读 [完整软件说明书](docs/SOFTWARE.zh-CN.md)，再按需要用 [PROJECT.md](docs/PROJECT.md) 查架构与部署细节。
+
+## 0.8.4 新变化
+
+- **检索层恢复**：Google News RSS 此前被 robots.txt 全站规则误杀、ceid 参数也写错；现仅对公开 RSS 端点做窄豁免并使用正确语言参数，同时把 Google News 的 opaque 链接解码为真实文章 URL。实测「太平洋是地球上最大的海洋」拿到新华社、人民日报、联合国、BBC 等 4 条可打开证据。
+- **拒绝假证据**：403 / Cloudflare 挑战页记为 `fetch_failed`，不进入证据池、不喂给模型，自动换下一个来源；可选 `JINA_READER_FALLBACK=true` 通过读取代理恢复被拦截的公开正文。
+- **队列提速**：Worker 按 `WORKER_CONCURRENCY` 并发处理并每 2 秒轮询；失败路径从 80+ 秒降到 10–20 秒。
+- **判定守卫**：`supported/refuted/mixed/outdated` 必须有 ≥1 条可打开来源 URL，否则自动降级；旧版「已核实但零证据」记录在 API 与详情页显式标注。
+- **监控不撒谎**：`/api/v1/search/health` 同时探测 RSS 与搜索通道，任务结果带 `retrieval_ok` / `warnings`，证据全空不会显示「健康」。
 
 ## 0.8.3 新变化
 

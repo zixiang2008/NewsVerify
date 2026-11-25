@@ -1,6 +1,6 @@
 # NewsVerify
 
-**Self-hosted, auditable fact-checking workspace.** Version **0.8.3 (Sieve)** · 2026-11-23.
+**Self-hosted, auditable fact-checking workspace.** Version **0.8.4 (Beacon)** · 2026-11-25.
 
 NewsVerify turns a news item into verifiable claims, searches open-web evidence, checks source independence, produces a constrained six-label verdict, cross-checks against 30 high-credibility media outlets, and keeps tracking the event for substantive changes.
 
@@ -22,6 +22,14 @@ NewsVerify turns a news item into verifiable claims, searches open-web evidence,
 | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | English | Six systems and verdict rules |
 | [docs/API.md](docs/API.md) | English | Public API v1 reference |
 | [CHANGELOG.md](CHANGELOG.md) | English | Version history |
+
+## What is new in 0.8.4
+
+- **Retrieval layer restored**: Google News RSS had been silently blocked by a broad `robots.txt` check and wrong `ceid` parameters; the public RSS endpoint is now used with correct locales, and opaque Google News links are decoded into real publisher article URLs.
+- **No more fake evidence**: 403 / Cloudflare challenge pages are recorded as `fetch_failed`, excluded from the evidence pool, and the next source is tried. Optional `JINA_READER_FALLBACK=true` recovers public article text through a reader proxy.
+- **Faster queue**: the worker processes jobs concurrently (`WORKER_CONCURRENCY`) and polls every 2s; failed retrieval paths dropped from 80+ seconds to 10–20 seconds.
+- **Verdict guard**: `supported/refuted/mixed/outdated` require at least one openable source URL; otherwise the verdict is downgraded to `insufficient_evidence`. Legacy zero-evidence records are visibly flagged.
+- **Honest monitoring**: `/api/v1/search/health` probes both RSS and search, and job results carry `retrieval_ok` / `warnings` so all-empty retrieval is never reported as healthy.
 
 ## What is new in 0.8.3
 

@@ -1,6 +1,6 @@
 # NewsVerify ソフトウェア仕様書
 
-**バージョン：** 0.8.3（Sieve） · **リリース日：** 2026-11-23  
+**バージョン：** 0.8.4（Beacon） · **リリース日：** 2026-11-25  
 **リポジトリ：** https://github.com/zixiang2008/NewsVerify  
 **公開コンソール：** https://new.caishen.today（LAN：`http://192.168.8.253:8095`）
 

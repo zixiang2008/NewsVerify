@@ -7,9 +7,12 @@ import re
 from typing import List, Dict, Any
 from urllib.parse import urlparse
 
+import httpx
+
 log = logging.getLogger("newsverify.evidence")
 
 from app.core.config import get_settings
+from app.core.security import validate_url
 from app.ingest.fetch import fetch_url
 from app.ingest.extract import extract_text
 from app.verification.search import unified_search, filter_relevant
@@ -62,132 +65,255 @@ def _chain_id(url: str, text: str) -> str:
     return _domain(url) + ":" + h
 
 
-async def collect_evidence(claim_text: str, max_results: int = 8) -> List[Dict[str, Any]]:
+async def _fetch_jina_reader(url: str) -> Dict[str, Any] | None:
+    """Best-effort reader fallback for anti-bot pages (opt-in via env).
+
+    Only public article URLs are sent, and the evidence link stays the original
+    publisher URL. The reader is a retrieval aid, not a source of authority.
+    """
     settings = get_settings()
-    queries = [claim_text]
-    # Also a refutation-oriented query
-    queries.append(f"{claim_text} (refutation OR false OR debunk)")
+    if not getattr(settings, "jina_reader_fallback", False):
+        return None
+    try:
+        validate_url(url)
+        proxy = "https://r.jina.ai/" + url
+        async with httpx.AsyncClient(timeout=14, follow_redirects=True) as client:
+            resp = await client.get(proxy, headers={"User-Agent": "NewsVerifyFactCheck/0.8"})
+        if resp.status_code >= 400 or len(resp.text) < 200:
+            return None
+        text = resp.text
+        title = ""
+        for line in text.splitlines()[:4]:
+            if line.lower().startswith("title:"):
+                title = line.split(":", 1)[1].strip()
+                break
+        if is_block_page(title, text):
+            return None
+        return {"title": title, "text": text, "final_url": url,
+                "content_hash": hashlib.sha256(resp.content).hexdigest(),
+                "via": "jina_reader"}
+    except Exception as exc:
+        log.debug("reader fallback failed for %s: %s: %s", url[:90], type(exc).__name__, str(exc)[:80])
+        return None
+
+
+async def collect_evidence(claim_text: str, max_results: int = 8,
+                           diagnostics: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    """Collect openable, relevant, trusted evidence for one claim.
+
+    ``diagnostics`` is an optional out-parameter used by the worker to surface
+    fetch_failed / anti-bot counts in the progress timeline without changing
+    the evidence contract.
+    """
+    settings = get_settings()
+    diag: Dict[str, Any] = diagnostics if diagnostics is not None else {}
+    diag.update({"discovered": 0, "relevant": 0, "fetch_failed": 0,
+                 "block_pages": 0, "reader_recovered": 0, "accepted": 0})
+    queries = [claim_text, f"{claim_text} (refutation OR false OR debunk)"]
     items: List[Dict[str, Any]] = []
-    seen_urls = set()
+    seen_urls: set[str] = set()
 
     # v0.6.0: compliant open-web discovery (Google News RSS + optional custom
-    # feeds). This only widens candidate discovery; every hit still passes the
-    # strict source whitelist before it can enter the evidence pool.
-    candidate_hits: List[Dict[str, Any]] = []
-
+    # feeds). v0.8.4: RSS article links are resolved to the real publisher URL
+    # — <source url> is only a homepage and must never become evidence.
     async def _rss():
-        from app.ingest.open_web import enhanced_collect, feed_to_hit, _publisher_hit
-        extra = await enhanced_collect(claim_text[:160], claim_text, max_results=max_results * 2)
-        hits: List[Dict[str, Any]] = []
-        for it in extra.items:
-            # Google News item links are news.google.com redirects that the
-            # strict policy drops as a search engine. Add the real publisher
-            # URL from <source url> so RSS stays a usable fallback channel.
-            pub = _publisher_hit(it)
-            if pub:
-                hits.append(pub)
-            hits.append(feed_to_hit(it))
-        return hits
+        from app.ingest.open_web import enhanced_collect, resolve_news_items
+        cjk = bool(re.search(r"[\u3400-\u9fff]", claim_text))
+        locale = "zh-CN" if cjk else "en-US"
+        extra = await enhanced_collect(claim_text[:160], claim_text,
+                                       max_results=max(max_results * 2, 12))
+        resolved = await resolve_news_items(extra.items, limit=max(max_results * 2, 12), locale=locale)
+        if not resolved:
+            log.warning("RSS discovery produced no resolvable articles for %r", claim_text[:50])
+        return resolved
 
-    # D6 fix: 三条发现通道（原查询搜索 / 反驳查询搜索 / RSS）并行执行，
-    # 整体设 25s 上限，避免串行等待把单条主张拖到数十秒。
-    async def _discover():
-        search_tasks = [unified_search(q, max_results=max_results * 4) for q in queries]
-        results = await asyncio.gather(*search_tasks, _rss(), return_exceptions=True)
-        for res in results:
+    # D6 fix: 三条发现通道（原查询搜索 / 反驳查询搜索 / RSS）并行执行。
+    # 2026-11-24 P3: 过去用 gather 统一等待，任何一条慢通道超时都会取消全部
+    # 通道（包括已经完成的 RSS），导致"失败路径 80 秒且 0 证据"。现在逐条
+    # 完成即并入候选池，并为每条通道单独设超时。
+    candidate_hits: List[Dict[str, Any]] = []
+    channels = [
+        ("search", asyncio.wait_for(unified_search(queries[0], max_results=max_results * 3), timeout=8)),
+        ("refutation", asyncio.wait_for(unified_search(queries[1], max_results=max_results * 3), timeout=8)),
+        ("rss", asyncio.wait_for(_rss(), timeout=12)),
+    ]
+    tasks = [asyncio.create_task(coro) for _, coro in channels]
+    task_names = {t: name for t, (name, _) in zip(tasks, channels)}
+    try:
+        for fut in asyncio.as_completed(tasks, timeout=13):
+            name = task_names.get(fut, "channel")
+            try:
+                res = await fut
+            except Exception as exc:
+                log.debug("discovery channel failed: %s: %s", type(exc).__name__, str(exc)[:100])
+                continue
             if isinstance(res, list):
                 candidate_hits.extend(res)
-            elif isinstance(res, Exception):
-                log.debug("discovery channel failed: %s: %s", type(res).__name__, str(res)[:100])
-    try:
-        await asyncio.wait_for(_discover(), timeout=25)
+                log.debug("discovery channel %s yielded %d candidates", name, len(res))
     except asyncio.TimeoutError:
-        log.warning("evidence discovery timed out for %r; continuing with partial candidates", claim_text[:50])
-    except Exception as e:
-        log.debug("discovery failed for %r: %s", claim_text[:50], str(e)[:100])
+        log.warning("evidence discovery timed out for %r; using %d partial candidates",
+                    claim_text[:50], len(candidate_hits))
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
 
-    # 2026-11-21 guard: the search upstream returned one fixed, unrelated BBC
-    # travel article for every query. That URL is on the trusted-media
-    # whitelist, so a trust filter alone cannot catch it. Enforce lexical
-    # relevance across *all* discovery channels (search + RSS + site:) before
-    # anything can enter the evidence pool.
+    diag["discovered"] = len(candidate_hits)
+    # 2026-11-21 guard: fixed/unrelated upstream results must never enter the
+    # evidence pool. Applied to every discovery channel, including RSS.
     candidate_hits = filter_relevant(claim_text, candidate_hits)
+    diag["relevant"] = len(candidate_hits)
 
-    # 通用搜索常被维基/百科/广告占据，可信媒体命中率低。补充对头部公信力
-    # 媒体的 site: 查询（公开搜索，合规），确保证据池有真实的主流媒体链接。
-    if len([r for r in candidate_hits if (classify_source(r.get("url", ""))[0] in ("media", "fact_checker", "authority"))]) < max_results:
+    # 通用搜索常被维基/百科/广告占据，可信媒体命中率低。仅当发现通道没有拿到
+    # 足够可信命中时才补做少量 site: 查询；有 RSS 结果时直接跳过，省下十几秒。
+    trusted_count = len([
+        r for r in candidate_hits
+        if classify_source(r.get("url", ""))[0] in ("media", "fact_checker", "authority")
+    ])
+    if trusted_count < 2:
+        from app.ingest.open_web import enhanced_collect, resolve_news_items
         from app.verification.top_media import TOP_MEDIA
-        from app.verification.search import search_duckduckgo as _ddg
-        from app.verification.source_policy import CN_AUTHORITY_DOMAINS
-        head = [m["domain"] for m in TOP_MEDIA[:8]]
-        # D1 fix: 中文/含 CJK 命题追加中文权威媒体 site: 检索，否则白名单全是
-        # 西方媒体，文化/常识类中文命题系统性取不到证据。
-        if re.search(r"[\u3400-\u9fff]", claim_text):
-            head = head[:4] + sorted(CN_AUTHORITY_DOMAINS)[:6]
-        async def _site(domain):
+        cjk = bool(re.search(r"[\u3400-\u9fff]", claim_text))
+        # site: 查询改走 Google News RSS：2026-11-24 实测 ddgs 的 site: 检索
+        # 在该 NAS 出口全部返回空/无关页，而 Google News RSS 能返回新华社、
+        # 央视网等真实文章。用短关键词而非整句，命中率更高。
+        filler = "的是了在与为对和及吗呢什么哪些一个我们你们他们这个那个作者报道新闻核查"
+        compact = re.sub(r"[\s，。？！,.?!:：;；]+", " ", claim_text)
+        compact = "".join(" " if ch in filler else ch for ch in compact)
+        compact = re.sub(r"\s+", " ", compact).strip()[:80] or claim_text[:80]
+        head = [m["domain"] for m in TOP_MEDIA[:4]]
+        if cjk:
+            head = ["news.cn", "cctv.com", "people.com.cn", "chinanews.com.cn"]
+        locale = "zh-CN" if cjk else "en-US"
+
+        async def _site_rss(domain):
             try:
-                hits = await asyncio.wait_for(_ddg(f"site:{domain} {claim_text[:110]}", max_results=2), timeout=8)
-                return hits if isinstance(hits, list) else []
+                feed = await asyncio.wait_for(
+                    enhanced_collect(f"site:{domain} {compact}", claim_text, max_results=6),
+                    timeout=8)
+                return await resolve_news_items(feed.items, limit=6, locale=locale)
             except Exception:
                 return []
-        for batch in range(0, len(head), 4):
-            group = head[batch:batch + 4]
-            for hits in await asyncio.gather(*[_site(d) for d in group], return_exceptions=True):
-                if isinstance(hits, list):
-                    candidate_hits.extend([h for h in hits if isinstance(h, dict) and h.get("url")])
 
-    for r in candidate_hits:
-        url = r.get("url", "")
+        site_tasks = [asyncio.create_task(_site_rss(d)) for d in head]
+        try:
+            site_results = await asyncio.wait_for(
+                asyncio.gather(*site_tasks, return_exceptions=True), timeout=10)
+        except asyncio.TimeoutError:
+            site_results = []
+            for t in site_tasks:
+                t.cancel()
+        added = 0
+        for hits in site_results:
+            if isinstance(hits, list):
+                new = [h for h in hits if isinstance(h, dict) and h.get("url")]
+                candidate_hits.extend(new)
+                added += len(new)
+        candidate_hits = filter_relevant(claim_text, candidate_hits)
+        diag["site_candidates"] = added
+        diag["discovered"] += added
+        diag["relevant"] = len(candidate_hits)
+
+    # Fetch candidates concurrently with a bounded fan-out and a hard phase
+    # budget. Blocked / failed pages are counted as fetch_failed and never
+    # become evidence — the next candidate is used instead.
+    sem = asyncio.Semaphore(6)
+
+    async def _prepare(hit: Dict[str, Any]) -> Dict[str, Any] | None:
+        url = hit.get("url", "")
         if not url or url in seen_urls:
-            continue
+            return None
         source_type, host = classify_source(url)
-        if source_type is None:
-            continue
-        # 搜索引擎域名只是检索入口，不是证据本身。它们的点击追踪/广告跳转
-        # 链接（如 bing.com/aclick）会被白名单放行，但绝不能进入证据池，
-        # 否则会跟随大量广告重定向，既污染证据又严重拖慢核查。
-        if source_type == "search_engine":
-            continue
-        fr = await fetch_url(url)
-        title, text = ("", "")
-        if not fr.error and fr.text:
-            title, text = extract_text(fr.text, url)
-        # D2 fix: 丢弃反爬/JS 挑战页，绝不能把空页面文本当成有效证据。
-        if is_block_page(title or r.get("title", ""), text):
-            log.debug("dropping anti-bot/challenge page from evidence: %s", url[:120])
-            continue
+        if source_type is None or source_type == "search_engine":
+            return None
+        async with sem:
+            try:
+                fr = await asyncio.wait_for(fetch_url(url), timeout=9)
+            except Exception as exc:
+                diag["fetch_failed"] += 1
+                log.debug("fetch timeout/failed %s: %s", url[:90], type(exc).__name__)
+                return None
+            title, text, raw_html = "", "", ""
+            if not fr.error and fr.text:
+                raw_html = fr.text
+                title, text = extract_text(fr.text, url)
+            reject_reason = None
+            if fr.error or fr.status_code >= 400:
+                reject_reason = f"http_{fr.status_code or 'error'}"
+            elif is_block_page(title or hit.get("title", ""), text):
+                reject_reason = "anti_bot_challenge"
+            if reject_reason:
+                diag["fetch_failed"] += 1
+                if reject_reason == "anti_bot_challenge":
+                    diag["block_pages"] += 1
+                reader = await _fetch_jina_reader(url)
+                if reader:
+                    diag["reader_recovered"] += 1
+                    title, text = reader["title"], reader["text"]
+                    fr_content_hash, via = reader["content_hash"], reader["via"]
+                    pm = re.search(r"Published Time:\s*(\S+)", text[:800])
+                    if pm:
+                        raw_html = f'<meta property="article:published_time" content="{pm.group(1)}">'
+                else:
+                    log.info("fetch_failed (%s), trying next source: %s", reject_reason, url[:110])
+                    return None
+            else:
+                fr_content_hash, via = fr.content_hash, ""
+
         if not title:
-            title = r.get("title", "")
-        snippet = (text[:600] if text else r.get("snippet", ""))
-        # D5 fix: 搜索结果通常没有发布日期，从页面 meta 补全。
-        published_at = r.get("published_at") or None
-        if not published_at and not fr.error and fr.text:
+            title = hit.get("title", "")
+        snippet = (text[:600] if text else hit.get("snippet", ""))
+        published_at = hit.get("published_at") or None
+        if not published_at and raw_html:
             try:
                 from app.ingest.extract import extract_published_at
-                published_at = extract_published_at(fr.text)
+                published_at = extract_published_at(raw_html)
             except Exception:
                 published_at = None
         seen_urls.add(url)
-        items.append({
+        return {
             "title": title,
             "url": url,
-            "final_url": fr.final_url if not fr.error else url,
+            "final_url": url,
             "snippet": snippet,
             "domain": host,
             "source_type": source_type,
-            "content_hash": fr.content_hash,
+            "content_hash": fr_content_hash,
             "independence_chain_id": _chain_id(url, snippet),
-            "fetch_error": fr.error,
+            "fetch_error": None,
             "published_at": published_at,
-            "discovery": r.get("discovery", ""),
-        })
-        if len(items) >= max_results * 2:
-            break
-    # Dedup by independence chain (collapse same chain)
-    # Keep first per chain
-    by_chain = {}
+            "discovery": hit.get("discovery", ""),
+            "retrieval_via": via,
+        }
+
+    tasks = [asyncio.create_task(_prepare(h))
+             for h in candidate_hits[:max(max_results * 2, 12)]]
+    try:
+        for fut in asyncio.as_completed(tasks, timeout=14):
+            try:
+                prepared = await fut
+            except Exception as exc:
+                diag["fetch_failed"] += 1
+                log.debug("candidate preparation failed: %s: %s", type(exc).__name__, str(exc)[:80])
+                continue
+            if prepared:
+                items.append(prepared)
+                if len(items) >= max_results * 2:
+                    break
+    except asyncio.TimeoutError:
+        log.warning("evidence fetch phase timed out for %r; using %d partial items",
+                    claim_text[:50], len(items))
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+
+    # Dedup by independence chain (collapse same-chain syndication)
+    by_chain: Dict[str, Dict[str, Any]] = {}
     for it in items:
         cid = it["independence_chain_id"]
         if cid not in by_chain:
             by_chain[cid] = it
-    return list(by_chain.values())[:max_results]
+    result = list(by_chain.values())[:max_results]
+    diag["accepted"] = len(result)
+    return result

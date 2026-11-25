@@ -2,7 +2,7 @@
 
 > 个人新闻事实核查与追踪服务，部署在群晖 NAS（N150-P）上，通过 Telegram Bot 与网页双入口使用。
 > 域名：`new.caishen.today`（Cloudflare Tunnel 公网入口）；局域网入口：`http://192.168.8.253:8095`。
-> 软件版本：0.8.3（Sieve） · 文档更新：2026-11-23
+> 软件版本：0.8.4（Beacon） · 文档更新：2026-11-25
 
 ---
 
@@ -103,7 +103,7 @@ NewsVerify/
 ├── .gitignore                # 防止 .env / 缓存 / 构建产物进入 Git
 ├── Dockerfile                # 应用镜像（bot/worker 共用）
 ├── compose.yaml              # 三容器编排（db / bot / worker）
-├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.8.3）
+├── pyproject.toml            # 依赖与项目元数据（Python ≥3.11，版本 0.8.4）
 ├── README.md                 # 默认英文入口与导航
 ├── README.zh-CN.md           # 中文入口与导航
 ├── README.ja.md              # 日文入口与导航
@@ -398,6 +398,9 @@ $DOCKER compose logs -f bot worker
 - **背景音乐**：`MUSIC_TRACKS` + Web Audio 生成式振荡器（4 首氛围曲），可播放/停止/切换/调音量，无外部音频依赖；偏好写入 localStorage。
 - **媒体面板**：`.media-list` 固定高度 + `overflow-y:auto` + 自定义滚动条；证据条目按 `media_rank / media_name / factual / reported_at` 渲染方括号标注，时间来自 Source 的 `published_at → fetched_at → created_at`。
 - **合规采集**（`app/ingest/open_web.py`）：`parse_feed` 解析 RSS/Atom，`collect_google_news()` 用公开 RSS 搜索，`robots_allowed()` 检查 robots.txt，`_polite_wait()` 按域名限速；`enhanced_collect()` 汇入 `collect_evidence()` 的候选池，但仍经 `classify_source()` 白名单过滤。配置键 `CUSTOM_FEED_URLS`。
+- **v0.8.4 检索修复**：`news.google.com/rss/search` 是 Google 公开的订阅源端点，仅该路径豁免 `Disallow: /` 站点规则（其他页面仍严格检查 robots）；`hl/gl/ceid` 分别按 `US:en` / `CN:zh-Hans` 构造。`resolve_google_news_url()` 把 opaque 文章 ID 解析成发布方原文 URL，`<source url>` 只是首页、不得作为证据。中文命题若可信命中不足，会用 `site:news.cn / cctv.com / people.com.cn / chinanews.com.cn` 的 RSS 查询补充。
+- **抓取失败与读取代理**：403/Cloudflare 挑战页计入 `fetch_failed` 并立即换源；可选 `JINA_READER_FALLBACK=true` 将公开文章 URL 送交 `r.jina.ai` 读取正文，证据链接仍保留原站 URL。默认关闭，便于注重隐私的自建环境。
+- **判定守卫**（`app/verification/judge.py`）：`supported/refuted/mixed/outdated` 至少一条可打开 URL，否则降级；`cited_urls` 只能引用本次证据池。历史遗留记录在 `/api/v1/events/{id}/process` 中以 `legacy_warning` 标注。
 - **IM 接入层**（`app/integrations/`）：`BaseChannel` 抽象 + `TelegramChannel` + `GenericWebhookChannel`，`ChannelRegistry` 配置驱动注册 `CHANNEL_CATALOGUE`（含 11 种主流平台）；统一入口 `POST /api/v1/im/{key}/webhook`，每个平台用 `NV_IM_{KEY}_WEBHOOK` / `NV_IM_{KEY}_SECRET` 配置。设计参考 NoneBot/OneBot 与 Kirara AI 的适配器模式，但不引入其运行时依赖。
 - **后台管理**：独立 PIN 会话 cookie `nv_admin`（PIN `1314`），路由 `/admin`、`/api/admin/config`（密钥脱敏）、`/api/admin/channels`、`/api/admin/channels/{key}/test`。中间件对 `/theory` 与后台登录放行。
 - **理论页**：`app/web/theory.py` 的 `PAGE` 为自包含 HTML，公开访问 `/theory`，含方法论表、频段体系来源、SVG 体系图、逐条引用与学术评价。

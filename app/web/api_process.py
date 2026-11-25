@@ -6,6 +6,8 @@ the mind-map model returned by ``/api/v1/events/{id}/mindmap``.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -104,6 +106,20 @@ async def build_process(session: AsyncSession, event_id: str) -> dict | None:
             "evidence": evidence,
         })
 
+    # 2026-11-24 P4: v0.7.x 遗留记录可能"已核实但零证据"。不篡改历史判定，
+    # 但在 API/前端显式标注，避免被当成当前版本的判定质量。
+    legacy_cutoff = datetime(2026, 11, 19, tzinfo=timezone.utc)
+    ev_created = event.created_at
+    legacy_claims: list[str] = []
+    if ev_created is not None:
+        created = ev_created if ev_created.tzinfo else ev_created.replace(tzinfo=timezone.utc)
+        if created < legacy_cutoff:
+            for c in claim_list:
+                v = c.get("verdict") or {}
+                if v.get("label") in {"supported", "refuted", "mixed", "outdated"} and not c["evidence"]:
+                    v["legacy_unverified"] = True
+                    legacy_claims.append(c["text"][:80])
+
     latest = job_list[-1] if job_list else None
     result = latest.get("result", {}) if latest else {}
     top_media = result.get("top_media") or []
@@ -114,6 +130,13 @@ async def build_process(session: AsyncSession, event_id: str) -> dict | None:
         "id": event.id, "title": event.title, "status": event.status,
         "created_at": _iso(event.created_at), "updated_at": _iso(event.updated_at),
         "summary": result.get("summary"),
+        "legacy_warning": (
+            "历史版本（v0.8.0 之前）遗留记录：判定为已核实/已证伪但无可打开证据，"
+            "请勿作为当前判定质量的依据。"
+        ) if legacy_claims else None,
+        "legacy_unverified_claims": legacy_claims,
+        "retrieval_ok": result.get("retrieval_ok"),
+        "collection_diagnostics": result.get("collection_diagnostics", []),
         "media_hits": len(lit), "total_reports": sum(int(m.get("hit_count") or 0) for m in top_media),
         "top_media": top_media, "jobs": job_list, "claims": claim_list,
         "subscriptions": [{

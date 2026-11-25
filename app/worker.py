@@ -136,14 +136,22 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
 
         verdict_lines = []
         all_evidence_items = []
+        collection_diagnostics: list[dict] = []
         for c in claims:
             claim_text = c["text"]
             claim = Claim(event_id=event_id, text=claim_text, language=c.get("language", "unknown"))
             session.add(claim)
             await session.flush()
 
-            evidence_items = await collect_evidence(claim_text, max_results=max_results)
-            await _update_progress(job.id, f"证据收集：{claim_text[:30]} → {len(evidence_items)} 条")
+            diag: dict = {}
+            evidence_items = await collect_evidence(claim_text, max_results=max_results, diagnostics=diag)
+            collection_diagnostics.append({"claim": claim_text[:120], **diag})
+            progress = f"证据收集：{claim_text[:30]} → {len(evidence_items)} 条"
+            if diag.get("fetch_failed"):
+                progress += f"（抓取失败/拦截页跳过 {diag['fetch_failed']} 个，换源重试）"
+            if diag.get("reader_recovered"):
+                progress += f"（读取代理恢复 {diag['reader_recovered']} 个）"
+            await _update_progress(job.id, progress)
             # persist sources/evidence in the same session
             persisted = 0
             for ei in evidence_items:
@@ -271,6 +279,11 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
             # progress 时间线，导致任务完成后弹窗里的“处理进度”变空。改为基于现有
             # result 合并，仅覆盖最终结果字段，保留 progress。
             res = dict(jj.result or {})
+            # 内容层健康信号：接口 200 但证据全空时，监控不能报"健康"。
+            retrieval_ok = bool(all_evidence_items)
+            warnings = list(res.get("warnings") or [])
+            if not retrieval_ok:
+                warnings.append("检索取证层未返回任何证据：请检查 /api/v1/search/health，勿据此判定事实")
             res.update({
                 "event_id": event_id, "claims": len(claims), "fingerprint": fp,
                 "top_media": top_media_results,
@@ -278,6 +291,9 @@ async def _process_check_job(job: Job, bot: Bot) -> None:
                 "media_hits": media_hits,
                 "total_reports": total_reports,
                 "summary": summary,
+                "retrieval_ok": retrieval_ok,
+                "collection_diagnostics": collection_diagnostics,
+                "warnings": warnings[-10:],
             })
             jj.result = res
             flag_modified(jj, "result")
@@ -396,9 +412,41 @@ async def run_worker() -> None:
             await session.commit()
     except Exception as _e:
         print(f"[worker] 僵尸任务回收失败: {_e}")
+    # 2026-11-24 P2 fix: 过去每轮按序处理 5 个 job，单条核查数十秒时队尾
+    # 要等 5–15 分钟。现在按 WORKER_CONCURRENCY 并发处理，轮询间隔压到 2s。
+    concurrency = max(1, int(settings.worker_concurrency or 1))
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _run_claim_job(job: Job) -> None:
+        async with sem:
+            try:
+                await _process_check_job(job, bot)
+            except Exception as e:
+                async with sm() as s2:
+                    jj = await s2.get(Job, job.id)
+                    if jj is not None:
+                        # D7 fix: 核心结果（verdicts/evidence）已提交且 event=done 时，
+                        # 即便 last-mile 步骤抛错也必须标 done，避免"结果完整却是 failed"。
+                        result = jj.result or {}
+                        core_complete = bool(result.get("event_id")) and bool(result.get("fingerprint"))
+                        if core_complete:
+                            jj.status = "done"
+                            jj.error = None
+                            res = dict(result)
+                            warns = list(res.get("warnings") or [])
+                            warns.append(f"last-mile 步骤异常（结果完整）: {str(e)[:200]}")
+                            res["warnings"] = warns[-10:]
+                            jj.result = res
+                            flag_modified(jj, "result")
+                        else:
+                            jj.status = "failed"
+                            jj.error = str(e)[:2000]
+                        jj.finished_at = datetime.now(timezone.utc)
+                        await s2.commit()
+
     while True:
         try:
-            # Process queued jobs
+            claimed = []
             async with sm() as session:
                 from sqlalchemy import select
                 res = await session.execute(select(Job).where(Job.status == "queued").order_by(Job.created_at).limit(5))
@@ -407,32 +455,10 @@ async def run_worker() -> None:
                     j.status = "running"
                     j.started_at = datetime.now(timezone.utc)
                     j.attempts += 1
-                    await session.commit()
-                    try:
-                        await _process_check_job(j, bot)
-                    except Exception as e:
-                        async with sm() as s2:
-                            jj = await s2.get(Job, j.id)
-                            if jj is not None:
-                                # D7 fix: 核心结果（verdicts/evidence）已在前面的 session
-                                # 提交且 event=done 时，即便 last-mile 步骤抛错也必须把
-                                # job 标为 done——否则监控看到 failed 但详情数据完整。
-                                result = jj.result or {}
-                                core_complete = bool(result.get("event_id")) and bool(result.get("fingerprint"))
-                                if core_complete:
-                                    jj.status = "done"
-                                    jj.error = None
-                                    res = dict(result)
-                                    warns = list(res.get("warnings") or [])
-                                    warns.append(f"last-mile 步骤异常（结果完整）: {str(e)[:200]}")
-                                    res["warnings"] = warns[-10:]
-                                    jj.result = res
-                                    flag_modified(jj, "result")
-                                else:
-                                    jj.status = "failed"
-                                    jj.error = str(e)[:2000]
-                                jj.finished_at = datetime.now(timezone.utc)
-                                await s2.commit()
+                    claimed.append(j)
+                await session.commit()
+            if claimed:
+                await asyncio.gather(*[_run_claim_job(j) for j in claimed], return_exceptions=True)
             # Process due subscriptions
             async with sm() as session:
                 from sqlalchemy import select
@@ -443,7 +469,7 @@ async def run_worker() -> None:
                     await _process_subscription(sub, bot)
         except Exception as e:
             print("worker error:", e)
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
 
 
 if __name__ == "__main__":

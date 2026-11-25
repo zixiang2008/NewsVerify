@@ -1,8 +1,22 @@
 # Changelog
 
-All notable changes to NewsVerify are documented here. The current version is **0.8.3 (Sieve, 2026-11-23)**.
+All notable changes to NewsVerify are documented here. The current version is **0.8.4 (Beacon, 2026-11-25)**.
 
 The single source of truth for the version is [`app/version.py`](app/version.py). Web UI, API, `pyproject.toml`, `compose.yaml` and documentation all follow it.
+
+## 0.8.4 — Beacon (2026-11-25)
+
+修复「接口全部 200，但检索取证层返回无关内容、全部判证据不足」的 P0–P5 故障：
+
+- **P0 检索发现恢复**：Google News RSS 此前被 `news.google.com/robots.txt` 的 `Disallow: /` 误杀，导致所有命题 0 候选；现仅对公开 RSS 端点做窄豁免（HTML 页面仍遵守 robots），并修正 `hl/gl/ceid` 参数（`US:en` / `CN:zh-Hans`）。
+- **P0 原文溯源**：新增 Google News 文章链接解码，`<source url>` 的媒体首页不再冒充证据；实测中文常识命题拿到新华社、人民日报、联合国、BBC 等真实文章 URL。
+- **P0 事件循环**：`ddgs` 为同步库，10 秒超时会阻塞事件循环并饿死已完成的 RSS 通道；改为 `asyncio.to_thread` 执行，三条发现通道完成即并入候选池。
+- **P1 拦截页治理**：403 / Cloudflare 挑战页记为 `fetch_failed`，不计入证据、不喂给模型，自动换下一个来源；可选 `JINA_READER_FALLBACK=true` 通过公共读取代理恢复 AP 等被拦截正文（只发送公开文章 URL，证据链接仍是原站）。
+- **P2 队列延迟**：Worker 按 `WORKER_CONCURRENCY` 并发处理，轮询 5s → 2s，消除队尾 5–15 分钟等待。
+- **P3 失败路径**：单通道超时收紧到 8/12s、总体 13s；`site:` 查询改走 Google News RSS（实测新华社/央视网可用）。单条核查从 80+ 秒降到 10–20 秒。
+- **P3/P4 判定与历史**：`supported/refuted/mixed/outdated` 必须带 ≥1 条可打开 URL，否则自动降级；`cited_urls` 限定本次证据池；旧版「已核实但零证据」记录在 API 与详情页显示 `legacy_warning`。
+- **P5 监控判据**：`/api/v1/search/health` 探测 RSS + 搜索双通道的查询多样性；任务结果新增 `retrieval_ok` 与 `warnings`，证据全空时不再显示「健康」。
+- **测试**：新增 7 项回归测试，共 13 项通过；容器内实测太平洋/埃菲尔铁塔/静夜思/黄河命题均获得可信证据。
 
 ## 0.8.3 — Sieve (2026-11-23)
 

@@ -1,6 +1,6 @@
 # NewsVerify 软件说明书
 
-**版本：** 0.8.3（Sieve） · **发布日期：** 2026-11-23  
+**版本：** 0.8.4（Beacon） · **发布日期：** 2026-11-25  
 **代码仓库：** https://github.com/zixiang2008/NewsVerify  
 **在线控制台：** https://new.caishen.today（局域网：`http://192.168.8.253:8095`）
 

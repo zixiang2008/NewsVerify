@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     brave_search_api_key: str = Field(default="", alias="BRAVE_SEARCH_API_KEY")
     google_factcheck_api_key: str = Field(default="", alias="GOOGLE_FACTCHECK_API_KEY")
     searxng_base_url: str = Field(default="", alias="SEARXNG_BASE_URL")
+    # Optional public reader proxy for pages blocked by Cloudflare/403.
+    # Opt-in: article URLs are sent to r.jina.ai; the evidence link stays the
+    # original publisher URL. Disabled by default for privacy-conscious NAS use.
+    jina_reader_fallback: bool = Field(default=False, alias="JINA_READER_FALLBACK")
     # Comma-separated public RSS/Atom feed URLs for compliant open-web discovery
     custom_feed_urls: str = Field(default="", alias="CUSTOM_FEED_URLS")
 

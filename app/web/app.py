@@ -2551,6 +2551,9 @@ async function showDetail(id){
   html+=`<div style="margin:8px 0"><input class="editable" id="editTitle" value="${(d.title||'').replace(/"/g,'&quot;')}" /><button class="btn small" style="margin-left:8px" onclick="saveTitleFromModal('${d.id}')">保存修改</button></div>`;
   // summary
   if(d.summary) html+=`<div class="note" style="margin:8px 0"><b>总结：</b>${esc(d.summary)}</div>`;
+  // 历史版本与内容层健康告警：接口 200 不等于取证成功。
+  if(d.legacy_warning) html+=`<div class="note" style="margin:8px 0;border-left:3px solid #f59e0b"><b>历史记录提示：</b>${esc(d.legacy_warning)}</div>`;
+  if(jr.warnings&&jr.warnings.length) html+=`<div class="note" style="margin:8px 0;border-left:3px solid #ef4444"><b>取证告警：</b>${esc(jr.warnings.join('；'))}</div>`;
   // claims + verdicts
   for(const c of d.claims){
     html+=`<h3>主张：${esc(c.text)}</h3>`;

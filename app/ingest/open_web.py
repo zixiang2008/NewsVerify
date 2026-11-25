@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
+import json
+import logging
+import re
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -31,6 +34,8 @@ import httpx
 
 from app.core.config import get_settings
 from app.core.security import MAX_DOWNLOAD_BYTES, validate_url
+
+log = logging.getLogger("newsverify.open_web")
 
 BROWSER_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -52,8 +57,28 @@ async def _polite_wait(url: str) -> None:
     _last_hit[host] = time.monotonic()
 
 
+# The Google News RSS search endpoint is a *published syndication feed* that
+# Google documents for third-party readers (https://news.google.com/rss).
+# news.google.com/robots.txt disallows crawling the HTML site with "Disallow: /",
+# but applying that blanket rule to the RSS endpoint disabled the only working
+# discovery channel on NAS hosts (2026-11-24 incident: 0 evidence for every
+# claim). This narrow exception covers the RSS path only — every other URL is
+# still checked against robots.txt as before, and no HTML page is exempted.
+_PUBLIC_FEED_PATHS = {("news.google.com", "/rss/search")}
+
+
+def _is_public_feed(url: str) -> bool:
+    try:
+        p = urlparse(url)
+        return (p.netloc.lower().rstrip("."), p.path) in _PUBLIC_FEED_PATHS
+    except Exception:
+        return False
+
+
 async def robots_allowed(url: str) -> bool:
     """Return True if robots.txt permits this path (fail-open on network error)."""
+    if _is_public_feed(url):
+        return True
     try:
         p = urlparse(url)
         robots = f"{p.scheme}://{p.netloc}/robots.txt"
@@ -184,16 +209,127 @@ async def collect_from_feeds(feed_urls: List[str]) -> CollectResult:
     return CollectResult(items=all_items, engine="rss")
 
 
+# ceid is NOT the same as the locale: e.g. en-US -> "US:en", zh-CN -> "CN:zh-Hans".
+# The old code sent ceid=en-US, which returned a feed with no usable items.
+_GNEWS_LOCALES = {
+    "en-US": ("en-US", "US", "US:en"),
+    "zh-CN": ("zh-CN", "CN", "CN:zh-Hans"),
+    "ja-JP": ("ja-JP", "JP", "JP:ja"),
+}
+
+
+def _google_news_rss_url(query: str, locale: str) -> str:
+    from urllib.parse import quote
+    hl, gl, ceid = _GNEWS_LOCALES.get(locale, _GNEWS_LOCALES["en-US"])
+    return (f"https://news.google.com/rss/search?q={quote(query)}"
+            f"&hl={hl}&gl={gl}&ceid={ceid}")
+
+
 async def collect_google_news(query: str, max_results: int = 10, locale: str = "en-US") -> CollectResult:
     """Use Google News public RSS search endpoint (no API key, public feed)."""
-    from urllib.parse import quote
-    url = f"https://news.google.com/rss/search?q={quote(query)}&hl={locale.split('-')[0]}&gl={locale.split('-')[-1]}&ceid={locale}"
+    url = _google_news_rss_url(query, locale)
     try:
         xml_text = await _get_text(url)
         items = parse_feed(xml_text, source="news.google.com")[:max_results]
         return CollectResult(items=items, engine="google_news_rss")
     except Exception as e:
         return CollectResult(engine="google_news_rss", error=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Google News article link resolution
+#
+# RSS items carry an opaque /rss/articles/<id> link rather than the publisher
+# URL. The <source url> field is only the publisher *homepage*, which is useless
+# as evidence. The public `batchexecute` endpoint used by Google News itself
+# resolves the id to the real article URL; no login or private API is involved.
+# Every resolution is best-effort and bounded — failures simply drop the hit.
+# ---------------------------------------------------------------------------
+_RESOLVE_CACHE: Dict[str, str | None] = {}
+_MAX_CACHE = 512
+
+
+def _extract_article_id(url: str) -> str | None:
+    try:
+        path = urlparse(url).path
+        marker = "/rss/articles/"
+        if marker not in path:
+            return None
+        return path.split(marker, 1)[1].strip("/")
+    except Exception:
+        return None
+
+
+async def resolve_google_news_url(url: str, locale: str = "en-US") -> str | None:
+    """Resolve a news.google.com RSS article link to its publisher URL."""
+    article_id = _extract_article_id(url)
+    if not article_id:
+        return None
+    if article_id in _RESOLVE_CACHE:
+        return _RESOLVE_CACHE[article_id]
+    resolved: str | None = None
+    try:
+        _hl, _gl, ceid = _GNEWS_LOCALES.get(locale, _GNEWS_LOCALES["en-US"])
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True,
+                                     headers={"User-Agent": BROWSER_UA}) as client:
+            page = await client.get(url)
+            sg = re.search(r'data-n-a-sg="([^"]+)"', page.text)
+            ts = re.search(r'data-n-a-ts="([^"]+)"', page.text)
+            if not (sg and ts):
+                return None
+            inner = [
+                "garturlreq",
+                [[ "X", "X", ["X", "X"], None, None, 1, 1, ceid, None, 1,
+                   None, None, None, None, None, 0, 1],
+                 "X", "X", 1, [1, 1, 1], 1, 1, None, 0, 0, None, 0],
+                article_id, int(ts.group(1)), sg.group(1),
+            ]
+            req = [[["Fbv4je", json.dumps(inner), None, "generic"]]]
+            resp = await client.post(
+                "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+                data={"f.req": json.dumps(req)},
+                headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+            )
+            payload = resp.text.split("\n", 1)[-1].strip()
+            rows = json.loads(payload)
+            for row in rows:
+                if len(row) > 2 and row[0] == "wrb.fr" and row[1] == "Fbv4je" and row[2]:
+                    data = json.loads(row[2])
+                    if isinstance(data, list) and len(data) > 1 and str(data[0]) == "garturlres":
+                        candidate = str(data[1])
+                        if candidate.startswith(("http://", "https://")):
+                            resolved = candidate
+                            break
+    except Exception as exc:
+        log.debug("google news resolve failed for %s: %s: %s",
+                  article_id[:24], type(exc).__name__, str(exc)[:80])
+    if len(_RESOLVE_CACHE) >= _MAX_CACHE:
+        _RESOLVE_CACHE.clear()
+    _RESOLVE_CACHE[article_id] = resolved
+    return resolved
+
+
+async def resolve_news_items(items: List[FeedItem], limit: int = 10,
+                             locale: str = "en-US") -> List[Dict[str, str]]:
+    """Resolve top RSS items into evidence candidates with *article* URLs."""
+    semaphore = asyncio.Semaphore(5)
+
+    async def _one(it: FeedItem):
+        async with semaphore:
+            real = await resolve_google_news_url(it.url, locale)
+            if not real:
+                return None
+            return {
+                "title": it.title,
+                "url": real,
+                "snippet": it.summary,
+                "published_at": it.published_at or "",
+                "discovery": "google_news_article",
+                "source": it.source,
+            }
+
+    results = await asyncio.gather(*[_one(it) for it in items[:limit]], return_exceptions=True)
+    return [r for r in results if isinstance(r, dict) and r.get("url")]
 
 
 async def enhanced_collect(query: str, claim_text: str, max_results: int = 10) -> CollectResult:

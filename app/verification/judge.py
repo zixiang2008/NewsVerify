@@ -38,11 +38,38 @@ async def judge_claim(claim_text: str, evidence_items: List[Dict[str, Any]]) -> 
         confidence = min(confidence, 0.35)
     elif label == "not_checkable":
         confidence = min(confidence, 0.5)
+
+    # 2026-11-24 判定守卫：supported / refuted / mixed / outdated 必须至少有
+    # 一条可打开的来源 URL。历史数据里曾出现"已核实但证据为空"的记录；模型
+    # 也可能在证据被拦截页污染后给出高置信结论。这里在写库前强制降级。
+    openable = [
+        str(e.get("url", ""))
+        for e in evidence_items
+        if isinstance(e, dict)
+        and str(e.get("url", "")).startswith(("http://", "https://"))
+        and not e.get("fetch_error")
+    ]
+    verdict_labels = {"supported", "refuted", "mixed", "outdated"}
+    gaps = list(data.get("evidence_gaps", []) or [])
+    if label in verdict_labels and not openable:
+        gaps.append("判定守卫：没有可打开的证据 URL，结论自动降级为 insufficient_evidence")
+        return {
+            "label": "insufficient_evidence",
+            "confidence": min(confidence, 0.35),
+            "rationale": (data.get("rationale", "") or "") +
+                         " [判定守卫：原结论缺少可打开来源，已降级]",
+            "counter_argument": data.get("counter_argument", ""),
+            "evidence_gaps": gaps,
+            "cited_urls": [],
+        }
+    # 引用的 URL 必须来自本次证据池，杜绝"引用了不存在的来源"。
+    allowed = set(openable)
+    cited = [u for u in (data.get("cited_urls", []) or []) if u in allowed] if openable else []
     return {
         "label": label,
         "confidence": confidence,
         "rationale": data.get("rationale", ""),
         "counter_argument": data.get("counter_argument", ""),
-        "evidence_gaps": data.get("evidence_gaps", []) or [],
-        "cited_urls": data.get("cited_urls", []) or [],
+        "evidence_gaps": gaps,
+        "cited_urls": cited,
     }
