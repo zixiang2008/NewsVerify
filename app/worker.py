@@ -306,6 +306,13 @@ async def _process_subscription(sub: Subscription, bot: Bot) -> None:
     settings = get_settings()
     async with sm() as session:
         from sqlalchemy import select
+        # The caller claims the subscription in a *different* session before
+        # scheduling this task, so re-attach it here; otherwise the final
+        # next_run_at / fingerprint updates would be lost on a detached object.
+        current = await session.get(Subscription, sub.id)
+        if current is None or not current.active or current.paused:
+            return
+        sub = current
         ev = await session.get(Event, sub.event_id)
         if ev is None:
             return
@@ -416,6 +423,15 @@ async def run_worker() -> None:
     # 要等 5–15 分钟。现在按 WORKER_CONCURRENCY 并发处理，轮询间隔压到 2s。
     concurrency = max(1, int(settings.worker_concurrency or 1))
     sem = asyncio.Semaphore(concurrency)
+    sub_sem = asyncio.Semaphore(2)
+
+    async def _run_subscription(sub: Subscription) -> None:
+        # 订阅重查可能持续数十秒；绝不能阻塞 queued job 的领取（P2）。
+        async with sub_sem:
+            try:
+                await _process_subscription(sub, bot)
+            except Exception as e:
+                print(f"[worker] 订阅处理失败 sub={sub.id}: {type(e).__name__}: {e}")
 
     async def _run_claim_job(job: Job) -> None:
         async with sem:
@@ -459,14 +475,19 @@ async def run_worker() -> None:
                 await session.commit()
             if claimed:
                 await asyncio.gather(*[_run_claim_job(j) for j in claimed], return_exceptions=True)
-            # Process due subscriptions
+            # Process due subscriptions without blocking the job queue:
+            # claim them first, then schedule as background tasks.
+            claimed_subs = []
             async with sm() as session:
                 from sqlalchemy import select
                 now = datetime.now(timezone.utc)
                 res = await session.execute(select(Subscription).where(Subscription.active == True, Subscription.paused == False, Subscription.next_run_at <= now))
-                subs = res.scalars().all()
-                for sub in subs:
-                    await _process_subscription(sub, bot)
+                for sub in res.scalars().all():
+                    sub.next_run_at = now + timedelta(minutes=10)
+                    claimed_subs.append(sub)
+                await session.commit()
+            for sub in claimed_subs:
+                asyncio.create_task(_run_subscription(sub))
         except Exception as e:
             print("worker error:", e)
         await asyncio.sleep(2)
