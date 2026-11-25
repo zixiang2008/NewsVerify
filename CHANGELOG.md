@@ -16,6 +16,7 @@ The single source of truth for the version is [`app/version.py`](app/version.py)
 - **P3 失败路径**：单通道超时收紧到 8/12s、总体 13s；`site:` 查询改走 Google News RSS（实测新华社/央视网可用）。单条核查从 80+ 秒降到 10–20 秒。
 - **P3/P4 判定与历史**：`supported/refuted/mixed/outdated` 必须带 ≥1 条可打开 URL，否则自动降级；`cited_urls` 限定本次证据池；旧版「已核实但零证据」记录在 API 与详情页显示 `legacy_warning`。
 - **P5 监控判据**：`/api/v1/search/health` 探测 RSS + 搜索双通道的查询多样性；任务结果新增 `retrieval_ok` 与 `warnings`，证据全空时不再显示「健康」。
+- **补充 hotfix**：订阅重查改为后台任务，不再阻塞 queued job；Worker 重启时一律回收残留 `running` 任务（此前只回收 10 分钟以上的，会卡单）；Top30 交叉核查改用已解析的 RSS 命中并加 20s 硬超时。实测端到端 27 秒完成（此前 80+ 秒）。
 - **测试**：新增 7 项回归测试，共 13 项通过；容器内实测太平洋/埃菲尔铁塔/静夜思/黄河命题均获得可信证据。
 
 ## 0.8.3 — Sieve (2026-11-23)

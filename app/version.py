@@ -38,6 +38,7 @@ RELEASES = [
             "P3 判定守卫：supported/refuted/mixed/outdated 必须带 ≥1 条可打开来源 URL，否则自动降级 insufficient_evidence；cited_urls 只能引用本次证据池中的 URL",
             "P4 历史记录：v0.8.0 之前「已核实但零证据」的旧事件在 API 与详情页标注 legacy_warning，不改写历史判定",
             "P5 监控判据：/api/v1/search/health 探测 RSS+搜索双通道的查询多样性；任务结果新增 retrieval_ok 与 warnings，证据全空时不再显示「健康」",
+            "hotfix：订阅重查后台化、Worker 重启回收全部残留 running 任务（消除卡单）、Top30 改用 RSS 命中并加 20s 硬超时；实测端到端 27 秒完成",
             "新增 7 项回归测试（RSS locale、robots 窄豁免、Google News ID 解析、拦截页、相关性闸门、判定守卫、引用白名单），共 13 项测试通过",
         ],
     },
